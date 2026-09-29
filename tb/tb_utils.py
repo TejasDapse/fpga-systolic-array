@@ -8,6 +8,7 @@
 Works with cocotb 1.9 and 2.x.
 """
 import os
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -18,6 +19,9 @@ TB_DIR = Path(__file__).resolve().parent
 ROOT = TB_DIR.parent
 RTL = ROOT / "rtl"
 COMMON = RTL / "common"
+CORE = RTL / "core"
+TOP = RTL / "top"
+sys.path.insert(0, str(ROOT))          # so tests can import model.golden_model
 
 
 # --------------------------------------------------------------- clock/reset
@@ -69,6 +73,12 @@ async def uart_recv(line, clk, cpb, timeout_cycles=100_000):
     return value
 
 
+def to_signed(value, bits):
+    """Interpret the low `bits` bits of an integer as two's complement."""
+    value = int(value) & ((1 << bits) - 1)
+    return value - (1 << bits) if value >> (bits - 1) else value
+
+
 # --------------------------------------------------------------- 7-segment
 # Active-high patterns {g,f,e,d,c,b,a} for 0..F (same table as hex7seg.sv)
 SEG_PATTERNS = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07,
@@ -102,16 +112,16 @@ def _get_runner(sim):
     return get_runner(sim)
 
 
-def run_sim(toplevel, sources, test_module, parameters=None):
+def run_sim(toplevel, sources, test_module, parameters=None, build_name=None):
     """Compile `sources` with `toplevel` and run the cocotb tests in `test_module`.
 
     Environment variables:
       SIM=icarus|verilator   (default icarus)
-      WAVES=1                dump waveforms into tb/sim_build/<toplevel>/
+      WAVES=1                dump waveforms into tb/sim_build/<build_name or toplevel>/
     """
     sim = os.environ.get("SIM", "icarus")
     waves = os.environ.get("WAVES", "0") == "1"
-    build_dir = TB_DIR / "sim_build" / toplevel
+    build_dir = TB_DIR / "sim_build" / (build_name or toplevel)
     runner = _get_runner(sim)
 
     build_args = ["-g2012"] if sim == "icarus" else ["--timing", "-Wno-fatal"]

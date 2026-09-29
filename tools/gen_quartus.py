@@ -38,8 +38,11 @@ PINS["UART_TXD"] = "V10"   # GPIO[0]  FPGA -> adapter RXD
 PINS["UART_RXD"] = "W10"   # GPIO[1]  adapter TXD -> FPGA
 
 # ---------------------------------------------------------------- projects
-# name: (top entity, [RTL files relative to the repo root])
+# name: (top entity, [RTL files relative to the repo root], {top-level parameters})
 COMMON = "rtl/common"
+CORE = "rtl/core"
+UART_FILES = [f"{COMMON}/{f}" for f in ["sync_2ff.sv", "tick_gen.sv", "hex7seg.sv",
+                                         "uart_rx.sv", "uart_tx.sv", "fifo_sync.sv"]]
 PROJECTS = {
     "foundations/01_switch_led": ("switch_led_top", [
         "foundations/01_switch_led/switch_led_top.sv"]),
@@ -53,6 +56,11 @@ PROJECTS = {
         f"{COMMON}/sync_2ff.sv", f"{COMMON}/tick_gen.sv", f"{COMMON}/hex7seg.sv",
         f"{COMMON}/uart_rx.sv", f"{COMMON}/uart_tx.sv", f"{COMMON}/fifo_sync.sv",
         "foundations/04_uart_echo/uart_echo_top.sv"]),
+    # The accelerator. Change N here (4 = bring-up, 8 = final) and re-run this script.
+    ".": ("top_de10lite", UART_FILES + [
+        f"{CORE}/{f}" for f in ["pe.sv", "systolic_array.sv", "skew_buffer.sv",
+                                "sram_sp.sv", "mm_controller.sv", "mm_core.sv"]] + [
+        "rtl/top/cmd_parser.sv", "rtl/top/top_de10lite.sv"], {"N": 4, "K_MAX": 64}),
 }
 
 SDC = """\
@@ -66,7 +74,7 @@ set_false_path -to   [get_ports {LEDR[*] HEX*[*] UART_TXD}]
 """
 
 
-def qsf_text(top: str, rtl_files: list[str], qdir: Path) -> str:
+def qsf_text(top: str, rtl_files: list[str], qdir: Path, params: dict) -> str:
     lines = [
         f'set_global_assignment -name FAMILY "MAX 10"',
         f"set_global_assignment -name DEVICE {DEVICE}",
@@ -81,6 +89,9 @@ def qsf_text(top: str, rtl_files: list[str], qdir: Path) -> str:
     for f in rtl_files:
         rel = Path("../" * len(qdir.relative_to(ROOT).parts)) / f
         lines.append(f"set_global_assignment -name SYSTEMVERILOG_FILE {rel.as_posix()}")
+    if params:
+        lines += ["", "# ---- top-level parameters ----"]
+        lines += [f"set_parameter -name {k} {v}" for k, v in params.items()]
     lines += ["", "# ---- pins (all 3.3-V LVTTL) ----"]
     for port, pin in PINS.items():
         lines.append(f"set_location_assignment PIN_{pin} -to {port}")
@@ -89,11 +100,11 @@ def qsf_text(top: str, rtl_files: list[str], qdir: Path) -> str:
 
 
 def main() -> None:
-    for proj, (top, files) in PROJECTS.items():
+    for proj, (top, files, *params) in PROJECTS.items():
         qdir = ROOT / proj / "quartus"
         qdir.mkdir(parents=True, exist_ok=True)
         (qdir / f"{top}.qpf").write_text(f'PROJECT_REVISION = "{top}"\n')
-        (qdir / f"{top}.qsf").write_text(qsf_text(top, files, qdir))
+        (qdir / f"{top}.qsf").write_text(qsf_text(top, files, qdir, params[0] if params else {}))
         (qdir / f"{top}.sdc").write_text(SDC)
         print(f"wrote {qdir.relative_to(ROOT)}/{top}.{{qpf,qsf,sdc}}")
 
