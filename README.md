@@ -31,6 +31,7 @@ model/        golden_model.py, regmap.py, vectors.py (shared test vectors)
   cpp/        bit-accurate C++ model + analytical perf model
   systemc/    TLM-2.0 loosely-timed + cycle-approximate models
 cosim/        Verilator (--sc) RTL vs SystemC co-simulation
+uvm/          UVM env (agent, DPI-C scoreboard, coverage, SVA) on Verilator; regress.py
 tb/           cocotb testbenches (pytest; SLOW=1 adds the N=8 full-system sim)
 host/         host.py (accelerator tests + benchmarks, --fake = no board), uart_echo_test.py
 tools/        gen_quartus.py (Quartus files + pin table), setup_ubuntu.sh, build.sh

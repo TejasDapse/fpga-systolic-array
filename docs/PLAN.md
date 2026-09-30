@@ -218,7 +218,7 @@ Systolic_Array/
 
 ---
 
-### WEEK 6 — Phase 6a: UVM Environment (simulation only)
+### WEEK 6 — Phase 6a: UVM Environment (simulation only)  ✅ done — [vplan](vplan.md), [regression](results/uvm_regression.md)
 **Goal:** A reusable, coverage-driven UVM testbench for `mm_core`.
 **Read first:** NOTES §25–§26
 
