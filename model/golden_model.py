@@ -16,9 +16,24 @@ def matmul_int32(a, b):
     return ((c + 2**31) % 2**32 - 2**31).astype(np.int64)
 
 
+def expected_perf(n, k):
+    """Perf counter values after one job (register map in rtl/core/mm_regs.sv).
+
+    Array enabled for K (COMPUTE) + 2N-1 (DRAIN) cycles; all N*N PEs are busy
+    only for steps 2N-1 .. K, i.e. max(0, K - 2N + 2) of them.
+    """
+    compute = k + 2 * n - 1
+    return {
+        "PERF_TOTAL": compute + 1,                        # + 1 CLEAR cycle
+        "PERF_COMPUTE": compute,
+        "PERF_FILLDRAIN": compute - max(0, k - 2 * n + 2),
+        "PERF_MACS": n * n * k,
+    }
+
+
 def expected_cycles(n, k):
-    """Cycles reported by mm_controller: 1 CLEAR + (K + 2N - 1) COMPUTE."""
-    return k + 2 * n
+    """START-to-DONE cycles (PERF_TOTAL)."""
+    return expected_perf(n, k)["PERF_TOTAL"]
 
 
 def edge_cases(n, k):

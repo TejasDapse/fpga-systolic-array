@@ -59,8 +59,8 @@ PROJECTS = {
     # The accelerator. Change N here (4 = bring-up, 8 = final) and re-run this script.
     ".": ("top_de10lite", UART_FILES + [
         f"{CORE}/{f}" for f in ["pe.sv", "systolic_array.sv", "skew_buffer.sv",
-                                "sram_sp.sv", "mm_controller.sv", "mm_core.sv"]] + [
-        "rtl/top/cmd_parser.sv", "rtl/top/top_de10lite.sv"], {"N": 4, "K_MAX": 64}),
+                                "sram_sp.sv", "mm_controller.sv", "mm_regs.sv", "mm_core.sv"]] + [
+        "rtl/top/uart_bus_bridge.sv", "rtl/top/top_de10lite.sv"], {"N": 4, "K_MAX": 64}),
 }
 
 SDC = """\

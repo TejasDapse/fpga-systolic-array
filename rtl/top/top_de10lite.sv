@@ -1,15 +1,15 @@
 // top_de10lite.sv  --  Systolic-array matrix-multiply accelerator on the DE10-Lite
 //
-//   UART_RXD -> uart_rx -> cmd_parser -> mm_core (buffers, skew, N x N array)
-//   UART_TXD <- uart_tx <- TX FIFO <--/
+//   UART_RXD -> uart_rx -> uart_bus_bridge --register bus--> mm_core
+//   UART_TXD <- uart_tx <- TX FIFO <--/                        (map: rtl/core/mm_regs.sv)
 //
 // Board I/O:
 //   KEY0          hold = reset
-//   HEX5..HEX0    cycle count of the last multiply (hex)
-//   LEDR[1:0]     controller state (0 idle, 1 clear, 2 compute, 3 done)
-//   LEDR[2]       busy
+//   HEX5..HEX0    PERF_COMPUTE of the last multiply (hex)
+//   LEDR[2:0]     controller state (0 idle, 1 clear, 2 compute, 3 drain, 4 done)
+//   LEDR[3]       busy
 //   LEDR[5]       UART framing error seen      (sticky)
-//   LEDR[6]       bad command / bad K          (sticky)
+//   LEDR[6]       unknown UART command         (sticky)
 //   LEDR[7]       host stalled mid-command     (sticky)
 //   LEDR[8]       a multiply has completed since reset
 //   LEDR[9]       heartbeat (1 Hz)
@@ -63,33 +63,29 @@ module top_de10lite #(
         .data(txq_rdata), .valid(~txq_empty), .ready(tx_ready), .tx(UART_TXD)
     );
 
-    // ---------------- parser + core ----------------
-    logic                       wr_en, wr_sel, start, busy, done;
-    logic [$clog2(N)-1:0]       wr_lane;
-    logic [$clog2(K_MAX)-1:0]   wr_addr;
-    logic [7:0]                 wr_data;
-    logic [$clog2(K_MAX+1)-1:0] k_len;
-    logic [31:0]                cycles, rd_data;
-    logic [$clog2(N*N)-1:0]     rd_idx;
-    logic [1:0]                 mm_state;
-    logic                       err_cmd, err_timeout;
+    // ---------------- bridge + core ----------------
+    logic        bus_valid, bus_ready, bus_write, bus_rvalid;
+    logic [15:0] bus_addr;
+    logic [31:0] bus_wdata, bus_rdata, perf_compute;
+    logic        busy, done, err_cmd, err_timeout;
+    logic [2:0]  mm_state;
 
-    cmd_parser #(.N(N), .K_MAX(K_MAX), .TIMEOUT_CLKS(CLK_HZ / 10)) u_parser (
+    uart_bus_bridge #(.TIMEOUT_CLKS(CLK_HZ / 10)) u_bridge (
         .clk(clk), .rst_n(rst_n),
         .rx_data(rx_data), .rx_valid(rx_valid),
         .tx_data(txq_wdata), .tx_push(txq_push), .tx_full(txq_full),
-        .wr_en(wr_en), .wr_sel(wr_sel), .wr_lane(wr_lane), .wr_addr(wr_addr),
-        .wr_data(wr_data), .k_len(k_len), .start(start), .done(done),
-        .cycles(cycles), .rd_idx(rd_idx), .rd_data(rd_data),
+        .bus_valid(bus_valid), .bus_ready(bus_ready), .bus_write(bus_write),
+        .bus_addr(bus_addr), .bus_wdata(bus_wdata),
+        .bus_rvalid(bus_rvalid), .bus_rdata(bus_rdata),
         .err_cmd(err_cmd), .err_timeout(err_timeout)
     );
 
     mm_core #(.N(N), .K_MAX(K_MAX)) u_core (
         .clk(clk), .rst_n(rst_n),
-        .wr_en(wr_en), .wr_sel(wr_sel), .wr_lane(wr_lane), .wr_addr(wr_addr),
-        .wr_data(wr_data), .k_len(k_len), .start(start),
-        .busy(busy), .done(done), .cycles(cycles), .state(mm_state),
-        .rd_idx(rd_idx), .rd_data(rd_data)
+        .bus_valid(bus_valid), .bus_ready(bus_ready), .bus_write(bus_write),
+        .bus_addr(bus_addr), .bus_wdata(bus_wdata),
+        .bus_rvalid(bus_rvalid), .bus_rdata(bus_rdata),
+        .busy(busy), .done(done), .state(mm_state), .perf_compute(perf_compute)
     );
 
     // ---------------- status ----------------
@@ -113,7 +109,7 @@ module top_de10lite #(
 
     logic [5:0][6:0] seg;
     for (genvar d = 0; d < 6; d++) begin : g_digit
-        hex7seg u_hex (.hex(cycles[4*d +: 4]), .seg_n(seg[d]));
+        hex7seg u_hex (.hex(perf_compute[4*d +: 4]), .seg_n(seg[d]));
     end
 
     assign HEX0 = {1'b1, seg[0]};
@@ -124,6 +120,6 @@ module top_de10lite #(
     assign HEX5 = {1'b1, seg[5]};
 
     assign LEDR = {heartbeat, ran_once, err_timeout, err_cmd, err_frame,
-                   2'b00, busy, mm_state};
+                   1'b0, busy, mm_state};
 
 endmodule

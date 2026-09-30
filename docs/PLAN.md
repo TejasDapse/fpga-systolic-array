@@ -148,7 +148,7 @@ Systolic_Array/
 
 ---
 
-### WEEK 2 — Phase 2: Compute Engine (simulation)
+### WEEK 2 — Phase 2: Compute Engine (simulation)  ✅ sim done · ⏳ Day 13 (needs Quartus)
 **Goal:** A verified, parameterized N×N systolic array.
 **Read first:** NOTES §12–§15
 
@@ -166,7 +166,7 @@ Systolic_Array/
 
 ---
 
-### WEEK 3 — Phase 3: System Integration (simulation)
+### WEEK 3 — Phase 3: System Integration (simulation)  ✅ sim done
 **Goal:** Complete design passing full-system simulation, with a **verification-friendly interface**.
 **Read first:** NOTES §9, §8, §16
 
@@ -289,14 +289,14 @@ UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
 | `0x0004` | `STATUS` | R | bit0 = BUSY, bit1 = DONE (clears on START) |
 | `0x0008` | `CFG_K` | R/W | K (1 … K_MAX) |
 | `0x000C` | `INFO` | R | [7:0] = N, [15:8] = K_MAX, [31:16] = version |
-| `0x0010` | `PERF_TOTAL` | R | cycles from START to DONE |
-| `0x0014` | `PERF_COMPUTE` | R | cycles with the array enabled |
-| `0x0018` | `PERF_FILLDRAIN` | R | compute cycles where not all PEs are active |
+| `0x0010` | `PERF_TOTAL` | R | cycles from START to DONE (= K + 2N: 1 CLEAR + K COMPUTE + 2N−1 DRAIN) |
+| `0x0014` | `PERF_COMPUTE` | R | cycles with the array enabled (= K + 2N − 1) |
+| `0x0018` | `PERF_FILLDRAIN` | R | compute cycles where not all PEs are active (= K + 2N − 1 − max(0, K − 2N + 2)) |
 | `0x001C` | `PERF_IDLE` | R | cycles in IDLE since reset (saturating) |
 | `0x0020` | `PERF_MACS` | R | useful MACs issued (should equal N·N·K) |
-| `0x1000–0x1FFF` | `A_BUF` | W | A, row-major, one int8 per byte |
-| `0x2000–0x2FFF` | `B_BUF` | W | B, row-major, one int8 per byte |
-| `0x3000–0x3FFF` | `C_BUF` | R | C, row-major, one int32 per word |
+| `0x1000–0x1FFF` | `A_BUF` | W | A[i][k] at `0x1000 + i·K_MAX + k` (row stride K_MAX), int8 in `wdata[7:0]` |
+| `0x2000–0x2FFF` | `B_BUF` | W | B[k][j] at `0x2000 + k·N + j` (contiguous), int8 in `wdata[7:0]` |
+| `0x3000–0x3FFF` | `C_BUF` | R | C[i][j] at `0x3000 + 4·(i·N + j)`, int32 |
 
 ### Why this matters
 - **UVM:** a single bus agent can drive and monitor everything.
@@ -309,7 +309,7 @@ UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
 
 | Metric | Expected (N=8, K=64, 50 MHz) |
 |---|---|
-| Compute cycles | ≈ K + 2N − 2 = **78** (+ a few control cycles) |
+| Compute cycles | ≈ K + 2N − 2 = **78** ideal; RTL sim: PERF_COMPUTE = **79**, PERF_TOTAL = **80** |
 | Peak throughput | 64 MACs/cycle × 50 MHz = **3.2 GMAC/s = 6.4 GOPS** |
 | Array utilization | 64 / 78 ≈ **82 %** |
 | Embedded multipliers | ~64 (of 144 available) |
@@ -341,8 +341,8 @@ UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
 
 - [x] Phase 1 — RTL + cocotb tests pass (13/13, Icarus 13)
 - [ ] Phase 1 — board: designs 01–04 work, UART echo 0 errors (Ubuntu)
-- [ ] Phase 2 — N×N array verified in simulation
-- [ ] Phase 3 — full system (register bus + perf counters) verified in simulation
+- [x] Phase 2 — N×N array verified in simulation (N = 2, 4, 8)
+- [x] Phase 3 — full system (register bus + perf counters) verified in simulation (N = 4, 8, over UART)
 - [ ] Phase 4 — hardware demo, benchmarks, README
 - [ ] Phase 5 — C++ + SystemC models, Verilator co-sim regression clean
 - [ ] Phase 6 — UVM env, coverage ≥ 95 %, correlation report

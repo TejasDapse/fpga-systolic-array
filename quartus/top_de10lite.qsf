@@ -18,8 +18,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/systolic_array.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/skew_buffer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/sram_sp.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/mm_controller.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/mm_regs.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/core/mm_core.sv
-set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/top/cmd_parser.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/top/uart_bus_bridge.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/top/top_de10lite.sv
 
 # ---- top-level parameters ----
