@@ -24,6 +24,17 @@ from [PLAN.md](PLAN.md). Read a section *before* doing the matching day's work.
 18. Interview Questions (with short answers)
 19. Glossary
 
+*Phases 5–6 — verification & performance modeling*
+
+20. Verification Methodology
+21. C/C++ Reference Models & DPI-C
+22. SystemC Basics
+23. TLM-2.0 Transaction-Level Modeling
+24. Verilator & RTL/SystemC Co-simulation
+25. UVM (Universal Verification Methodology)
+26. SystemVerilog for Verification: Classes, Constraints, Coverage, SVA
+27. Performance Modeling & HW/SW Correlation (+ interview questions)
+
 ---
 
 ## 1. Number Systems & Two's Complement
@@ -753,3 +764,428 @@ B buffer (M9K) ─▶ B skew ─▶ ┘
 | Roofline | Performance model: min(peak compute, bandwidth × intensity) |
 | Tiling | Splitting a big matrix into array-sized blocks |
 | Double buffering | Loading the next data set while computing the current one |
+
+---
+
+# Part 2 — Verification & Performance Modeling (Phases 5–6)
+
+---
+
+## 20. Verification Methodology
+
+### Pre-silicon verification
+- Chips cost months and millions to fabricate → bugs must be found **before** tape-out.
+- Levels: unit (one block) → subsystem → SoC → emulation / FPGA prototype → post-silicon validation.
+- **Shift-left:** find bugs as early as possible (models + simulation), where fixing is cheapest.
+
+### The verification plan (vplan)
+- A document listing **features → how each is tested → how completion is measured**.
+- Example rows for this project:
+  | Feature | Test | Coverage |
+  |---|---|---|
+  | Correct C for any K | random_job_seq | K bins 1, 2–7, 8–63, 64 |
+  | Signed extremes | corner_values_test | A/B values −128, −1, 0, 1, 127 |
+  | Back-to-back jobs | b2b_test | cross(job_count, K) |
+  | Reset during compute | reset_mid_test | FSM state at reset |
+- Interviewers love asking "how do you know you're done?" → **the vplan + coverage goals**.
+
+### Directed vs constrained-random
+- **Directed:** hand-written scenario (identity matrix). Precise, but only tests what you think of.
+- **Constrained-random:** random stimulus within legal rules (constraints). Finds bugs you didn't imagine.
+- Industry uses both: random for breadth, directed for specific corner cases coverage misses.
+
+### Coverage-driven verification (CDV) loop
+```
+ write vplan → build TB → run random regression → measure coverage
+      ▲                                                  │
+      └──── add constraints / directed tests for holes ◀─┘
+```
+
+### Two kinds of coverage
+- **Code coverage** (automatic, from the simulator): line, branch, condition, toggle, FSM state/transition.
+  - Answers: "did the code *execute*?"
+- **Functional coverage** (written by you: covergroups): "did we test the *features* in the vplan?"
+  - 100 % code coverage does **not** mean the design is correct.
+
+### Checking
+- **Scoreboard:** compares DUT outputs with a **reference model** automatically.
+- **Assertions (SVA):** check protocol/timing rules every cycle (e.g., "ready never drops while valid is held").
+- **Self-checking:** every test ends in PASS/FAIL — no manual waveform inspection.
+
+### Regression
+- Run all tests with many random **seeds** every change. A failing seed must be **reproducible**.
+- Track pass rate, coverage trend, bugs found per week.
+
+---
+
+## 21. C/C++ Reference Models & DPI-C
+
+### Types of models
+- **Bit-accurate (functional) model:** produces exactly the same output bits as the RTL, no timing.
+- **Cycle-approximate model:** also predicts roughly how many cycles.
+- **Cycle-accurate model:** matches the RTL cycle for cycle (expensive to write; the RTL itself is one).
+
+### Writing a bit-accurate C++ model
+- Use fixed-width types: `int8_t`, `int16_t`, `int32_t`, `int64_t` (`<cstdint>`).
+- **Careful:** signed integer overflow is **undefined behaviour in C/C++**. If the RTL wraps at 32 bits,
+  accumulate in `int64_t` and then truncate, or do the arithmetic in `uint32_t`:
+  ```cpp
+  int32_t wrap_add(int32_t acc, int32_t p) {
+      return (int32_t)((uint32_t)acc + (uint32_t)p);   // two's-complement wrap, like hardware
+  }
+  ```
+- The model must mirror the RTL **spec**, not the RTL **code** — otherwise both share the same bug.
+
+### Shared test vectors
+- Store inputs/expected outputs in simple files (e.g., `.hex`, one value per line).
+- NumPy, C++, SystemC, cocotb and UVM all read the **same files** → any mismatch points to one model.
+
+### DPI-C (Direct Programming Interface)
+- Standard SystemVerilog feature to call C functions from SV (and vice versa).
+- SV side:
+  ```systemverilog
+  import "DPI-C" function void mm_ref(input int n, input int k,
+                                      input byte a[], input byte b[], output int c[]);
+  ```
+- C/C++ side (open arrays arrive as handles):
+  ```cpp
+  #include "svdpi.h"
+  extern "C" void mm_ref(int n, int k, const svOpenArrayHandle a,
+                         const svOpenArrayHandle b, const svOpenArrayHandle c) {
+      auto* A = static_cast<const int8_t*>(svGetArrayPtr(a));
+      auto* B = static_cast<const int8_t*>(svGetArrayPtr(b));
+      auto* C = static_cast<int32_t*>(svGetArrayPtr(c));
+      // ... bit-accurate matmul ...
+  }
+  ```
+- Type mapping: `byte ↔ char/int8_t`, `int ↔ int32_t`, `longint ↔ int64_t`, `bit ↔ svBit`.
+- `export "DPI-C"` lets C code call an SV function/task (used less often).
+- Questa flow: `vlog -dpiheader dpi.h tb.sv` → compile C into a shared library → `vsim -sv_lib libref ...`.
+
+---
+
+## 22. SystemC Basics
+
+### What it is
+- A **C++ class library** (IEEE 1666) that adds hardware concepts to C++: modules, ports, signals, clocks, time, concurrency.
+- Used for **architecture exploration, performance models, virtual platforms** (running software before silicon exists).
+- Much faster than RTL simulation; written by architects and modeling/verification engineers.
+
+### Building blocks
+- `SC_MODULE(Name)` — a hardware block (a C++ class).
+- `SC_CTOR(Name)` — constructor; registers processes.
+- Ports: `sc_in<T>`, `sc_out<T>`; channels: `sc_signal<T>`, `sc_fifo<T>`.
+- `sc_clock clk("clk", 20, SC_NS);` — a 50 MHz clock.
+- `sc_main()` — replaces `main()`; instantiate, bind ports, call `sc_start()`.
+
+### Processes
+- **`SC_METHOD`**: runs to completion each time a signal in its sensitivity list changes; **cannot `wait()`**. Like `always_comb`/`always_ff`.
+- **`SC_THREAD`**: started once, can **`wait()`** for time or events. Natural for sequential behaviour and cycle-approximate models.
+- `wait(10, SC_NS)`, `wait(clk.posedge_event())`, `wait(ev)`.
+
+### Example — a MAC PE
+```cpp
+SC_MODULE(pe) {
+    sc_in<bool>          clk, clear, en;
+    sc_in<sc_int<8>>     a_in, b_in;
+    sc_out<sc_int<32>>   acc;
+    sc_int<32> acc_r = 0;
+
+    void step() {
+        if (clear.read())      acc_r = 0;
+        else if (en.read())    acc_r += a_in.read() * b_in.read();
+        acc.write(acc_r);
+    }
+    SC_CTOR(pe) { SC_METHOD(step); sensitive << clk.pos(); }
+};
+```
+
+### Delta cycles
+- Like Verilog, SystemC updates signals in **delta cycles**: a write becomes visible after the current evaluation, at the same simulation time. This is how non-blocking-like behaviour is modelled.
+
+### Data types
+- `sc_int<W>`, `sc_uint<W>` (≤ 64 bits), `sc_bigint<W>`, `sc_bv<W>` (bit vector), `sc_lv<W>` (4-state logic).
+- Plain C++ types are faster; use `sc_int` when exact width matters.
+
+---
+
+## 23. TLM-2.0 Transaction-Level Modeling
+
+### Idea
+- Instead of modelling every wire and cycle, model **transactions**: "write 64 bytes to address 0x1000".
+- 100–1000× faster than RTL → can simulate software running on a whole SoC.
+
+### Key pieces (part of IEEE 1666)
+- **Initiator** (e.g., CPU model, test) sends transactions; **target** (e.g., accelerator, memory) receives them.
+- **Sockets:** `tlm_utils::simple_initiator_socket`, `tlm_utils::simple_target_socket`.
+- **Generic payload** `tlm::tlm_generic_payload`: command (READ/WRITE), address, data pointer, length, byte enables, response status.
+
+### Coding styles
+- **Loosely-timed (LT):** blocking call `b_transport(trans, delay)`. The target adds its latency to `delay`.
+  - Fast; used for software development / functional models.
+  - **Temporal decoupling:** an initiator runs ahead of simulation time up to a **quantum**, then syncs.
+- **Approximately-timed (AT):** non-blocking `nb_transport_fw/bw` with 4 phases
+  `BEGIN_REQ → END_REQ → BEGIN_RESP → END_RESP`. Models pipelining and contention; slower, more accurate.
+- **DMI (Direct Memory Interface):** initiator gets a raw pointer to target memory → even faster.
+
+### Target example (our register map)
+```cpp
+void b_transport(tlm::tlm_generic_payload& t, sc_time& delay) {
+    uint64_t addr = t.get_address();
+    uint8_t* ptr  = t.get_data_ptr();
+    if (t.is_write()) write_reg(addr, ptr, t.get_data_length());
+    else              read_reg(addr, ptr, t.get_data_length());
+    delay += sc_time(20, SC_NS);                 // model 1 bus cycle
+    t.set_response_status(tlm::TLM_OK_RESPONSE);
+}
+```
+
+### Modeling levels — speed vs accuracy
+| Level | Speed | Timing accuracy | Used for |
+|---|---|---|---|
+| Untimed / functional | fastest | none | algorithm, reference model |
+| TLM LT | very fast | approximate latency | virtual platforms, SW bring-up |
+| TLM AT | fast | pipeline/contention | architecture & performance studies |
+| Cycle-accurate | slow | exact | detailed perf, RTL correlation |
+| RTL | slowest | exact (it *is* the design) | implementation, sign-off |
+
+---
+
+## 24. Verilator & RTL/SystemC Co-simulation
+
+### Verilator
+- Open-source tool that **compiles SystemVerilog RTL into C++ (or SystemC) classes**.
+- Very fast (cycle-based, 2-state: no `X`/`Z`), used by many companies for large regressions.
+- Verilator ≥ 5 supports `--timing` (delays, `@` events in testbenches).
+- `verilator --sc` generates a **SystemC module** — the RTL becomes an `sc_module` with `sc_in`/`sc_out` ports.
+
+### Co-simulation harness
+```
+                 same stimulus (from .hex vectors)
+        ┌───────────────┴────────────────┐
+        ▼                                ▼
+  Vmm_core (RTL via Verilator)    mm_ca (SystemC model)
+        │  C matrix + perf counters      │
+        └────────────► compare ◄─────────┘
+                         │
+                  mismatch → dump both states + waveform
+```
+- Build example:
+  ```bash
+  verilator --sc --exe --build -Wall --top-module mm_core \
+      rtl/core/*.sv cosim/sc_main.cpp -o cosim
+  ```
+- Checks both **function** (same C) and **performance** (same/near cycle counters).
+
+### Why this matters
+- Proves the **software model matches the hardware** → the model can then be trusted for early performance studies and software development.
+- Exactly the "co-simulation in SystemC environment to verify software models and RTL" task in verification JDs.
+
+---
+
+## 25. UVM (Universal Verification Methodology)
+
+### What it is
+- A **SystemVerilog class library** (IEEE 1800.2) that standardizes how testbenches are built.
+- Goals: **reuse** (agents reused across projects), **scalability**, constrained-random + coverage.
+- Needs a full simulator: Questa, VCS, Xcelium, Riviera (Icarus can't run UVM).
+
+### Architecture
+```
+ uvm_test (base_test, random_test ...)
+  └── uvm_env (mm_env)
+       ├── uvm_agent (bus_agent)          ← active: drives the DUT
+       │    ├── uvm_sequencer  ◀── sequences (random_job_seq ...)
+       │    ├── uvm_driver     ──▶ virtual interface ──▶ DUT pins
+       │    └── uvm_monitor    ◀── virtual interface ◀── DUT pins
+       │          └── analysis_port ──┬──▶ uvm_scoreboard (DPI-C → C++ model)
+       │                              └──▶ coverage collector (uvm_subscriber)
+       └── env config
+```
+
+### Components (static, built once — `uvm_component`)
+- **Driver:** takes sequence items, wiggles DUT pins through a **virtual interface**.
+- **Monitor:** passively watches pins, reconstructs transactions, broadcasts them (`analysis_port.write()`).
+- **Sequencer:** arbitrates and hands items from sequences to the driver.
+- **Agent:** bundles driver + sequencer + monitor. *Active* (drives) or *passive* (monitor only).
+- **Scoreboard:** receives transactions, computes expected results (reference model), compares.
+- **Env:** contains agents, scoreboards, coverage. **Test:** configures the env and starts sequences.
+
+### Objects (dynamic, created and destroyed — `uvm_object`)
+- **Sequence item** (`uvm_sequence_item`): one transaction (e.g., bus read/write), `rand` fields + constraints.
+- **Sequence** (`uvm_sequence`): generates a stream of items in its `body()` task.
+
+### Key mechanisms
+- **Factory:** create with `type_id::create("name", this)` → tests can **override** types without editing the env.
+- **`uvm_config_db`:** pass configuration and the **virtual interface** from top module to components.
+  ```systemverilog
+  uvm_config_db#(virtual mm_bus_if)::set(null, "*", "vif", bus_if);     // in tb_top
+  if (!uvm_config_db#(virtual mm_bus_if)::get(this, "", "vif", vif))    // in driver
+      `uvm_fatal("NOVIF", "virtual interface not set")
+  ```
+- **Phases:** `build_phase` → `connect_phase` → `end_of_elaboration` → `start_of_simulation`
+  → **`run_phase`** (the only time-consuming task phase) → `extract` → `check` → `report` → `final`.
+- **Objections:** `phase.raise_objection(this)` / `drop_objection` — simulation ends when all objections drop.
+- **TLM ports:** driver ↔ sequencer via `seq_item_port`; monitor → subscribers via `uvm_analysis_port`.
+- **Reporting:** `` `uvm_info(ID, msg, UVM_LOW) ``, `` `uvm_error ``, `` `uvm_fatal ``.
+
+### Driver sketch
+```systemverilog
+class bus_driver extends uvm_driver #(bus_item);
+  `uvm_component_utils(bus_driver)
+  virtual mm_bus_if vif;
+  function new(string name, uvm_component parent); super.new(name, parent); endfunction
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req);
+      vif.cb.bus_valid <= 1;
+      vif.cb.bus_write <= req.write;
+      vif.cb.bus_addr  <= req.addr;
+      vif.cb.bus_wdata <= req.data;
+      do @(vif.cb); while (!vif.cb.bus_ready);
+      vif.cb.bus_valid <= 0;
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+```
+
+### Sequence sketch
+```systemverilog
+class random_job_seq extends uvm_sequence #(bus_item);
+  `uvm_object_utils(random_job_seq)
+  rand int unsigned k;
+  constraint c_k { k inside {[1:64]}; }
+  task body();
+    // write CFG_K, write A/B buffers, write CTRL.START, poll STATUS.DONE, read C
+  endtask
+endclass
+```
+
+---
+
+## 26. SystemVerilog for Verification: Classes, Constraints, Coverage, SVA
+
+### Classes & randomization
+- OOP: `class`, `extends`, `virtual` methods, `new()`, handles (like pointers).
+- `rand` (any value) and `randc` (cycles through all values before repeating).
+- Constraints:
+  ```systemverilog
+  class mm_job;
+    rand int unsigned k;
+    rand byte a[], b[];
+    constraint c_k    { k dist { 1 := 5, [2:63] :/ 80, 64 := 15 }; }   // weighted
+    constraint c_size { a.size() == 8 * k; b.size() == k * 8; }
+    constraint c_vals { foreach (a[i]) a[i] dist { -128 := 5, 127 := 5, [-127:126] :/ 90 }; }
+  endclass
+  ```
+- `obj.randomize() with { k == 1; }` — inline constraints for a directed-random test.
+- `solve a before b` — control the probability distribution.
+
+### Interfaces & clocking blocks
+- `interface` bundles signals; `modport` defines directions per user.
+- **Clocking block** defines *when* the TB samples and drives relative to the clock → avoids races.
+  ```systemverilog
+  interface mm_bus_if(input logic clk);
+    logic bus_valid, bus_ready, bus_write, bus_rvalid;
+    logic [15:0] bus_addr; logic [31:0] bus_wdata, bus_rdata;
+    clocking cb @(posedge clk);
+      default input #1step output #1;
+      output bus_valid, bus_write, bus_addr, bus_wdata;
+      input  bus_ready, bus_rvalid, bus_rdata;
+    endclocking
+  endinterface
+  ```
+
+### Functional coverage
+```systemverilog
+covergroup cg_job with function sample(int k, byte a0);
+  cp_k   : coverpoint k  { bins one = {1}; bins small = {[2:7]}; bins mid = {[8:63]}; bins max = {64}; }
+  cp_val : coverpoint a0 { bins min = {-128}; bins neg = {[-127:-1]}; bins zero = {0};
+                           bins pos = {[1:126]}; bins max = {127}; }
+  x_k_val: cross cp_k, cp_val;
+endgroup
+```
+- `bins` = buckets you want to hit; `cross` = combinations; `ignore_bins`/`illegal_bins` exclude values.
+
+### SystemVerilog Assertions (SVA)
+- **Immediate:** `assert (x == y) else $error(...)` — checked when executed (procedural).
+- **Concurrent:** checked every clock, describe behaviour over time.
+  ```systemverilog
+  // Once valid is raised, it stays high with stable address until accepted
+  a_hold: assert property (@(posedge clk) disable iff (!rst_n)
+            bus_valid && !bus_ready |=> bus_valid && $stable(bus_addr));
+
+  // START while idle leads to DONE within K+2N+10 cycles
+  a_done: assert property (@(posedge clk) disable iff (!rst_n)
+            start && !busy |-> ##[1:MAX_LAT] done);
+  ```
+- Operators: `|->` (same cycle), `|=>` (next cycle), `##n` (delay), `[*n]` (repeat), `$rose`, `$fell`, `$stable`, `$past`.
+- `cover property` counts how often a scenario happened (functional coverage from assertions).
+
+---
+
+## 27. Performance Modeling & HW/SW Correlation
+
+### Why model performance
+- Architects decide array size, buffer sizes, bus widths **before RTL exists** using models.
+- Later, the model must be **correlated** with RTL/silicon so its predictions can be trusted for the next design.
+
+### Levels in this project
+| Level | What predicts cycles | Speed |
+|---|---|---|
+| Analytical | `K + 2N − 2 + overhead` formula | instant |
+| SystemC cycle-approximate | `mm_ca` model, counters | fast |
+| RTL simulation | `PERF_*` counters in Verilator/Questa | slow |
+| FPGA hardware | same `PERF_*` counters read over UART | real |
+
+### Correlation methodology
+1. **Same workloads** everywhere (shared `.hex` vectors, same N/K sweep).
+2. **Same metrics** — identical counter definitions (register map §6 of PLAN).
+3. Measure all levels, compute **error % = (model − measured) / measured × 100**.
+4. Plot model vs measured (should lie on the y = x line). Report mean and max error.
+5. Investigate outliers → find the **missing effect** (control overhead, BRAM latency, pipeline bubbles, bus handshakes).
+6. **Calibrate** the model (add the missing overhead), then re-run → error shrinks.
+7. Keep correlation in the regression so the model doesn't drift as RTL changes.
+
+### Performance counters (hardware side)
+- Cheap to add, invaluable for debug and correlation: cycles busy/idle, stalls, events (MACs issued).
+- Real SoCs have PMUs (Performance Monitoring Units) for exactly this.
+
+### Functional correlation
+- Same inputs → **bit-identical** outputs across NumPy, C++, SystemC, RTL and FPGA.
+- Any mismatch is triaged: which model is wrong? (spec ambiguity, model bug, RTL bug).
+
+### Interview questions (verification & modeling)
+1. **What is UVM and why use it?** Standard SV class library for reusable, constrained-random, coverage-driven testbenches.
+2. **Explain the UVM testbench components.** Test → env → agent (sequencer, driver, monitor) + scoreboard + coverage.
+3. **Component vs object?** Components are static (built in build_phase, live whole sim); objects are dynamic (sequence items, sequences).
+4. **What are UVM phases? Which consume time?** build, connect, …, run, extract, check, report; only `run_phase` (and its sub-phases) consume time.
+5. **What is the factory for?** Creating objects by type so tests can override them without changing the env.
+6. **How does the driver get the interface?** Virtual interface passed via `uvm_config_db`.
+7. **What are objections?** They keep the run phase alive until all components/sequences finish.
+8. **Code vs functional coverage?** Code = what RTL executed; functional = which spec features/scenarios were exercised.
+9. **What is DPI-C?** SV ↔ C function calls; used to plug C/C++ reference models into scoreboards.
+10. **LT vs AT in TLM-2.0?** LT: blocking `b_transport`, fast, approximate timing; AT: non-blocking 4-phase, models pipelining.
+11. **SC_METHOD vs SC_THREAD?** METHOD runs to completion, can't wait; THREAD can `wait()`.
+12. **How do you correlate a performance model with RTL?** Same workloads + counters, compute error, find missing effects, calibrate, keep in regression.
+13. **`|->` vs `|=>`?** Overlapping (same cycle) vs non-overlapping (next cycle) implication.
+14. **How do you know verification is done?** vplan items all tested, functional coverage goals met, code coverage reviewed, regression stable, bug rate near zero.
+15. **Your project in one line:** "C++/SystemC models + UVM with DPI-C scoreboard verified my systolic array RTL; SystemC-predicted cycles matched RTL and FPGA counters within X %."
+
+### Glossary (verification)
+| Term | Meaning |
+|---|---|
+| vplan | Verification plan: features → tests → coverage |
+| CDV | Coverage-driven verification |
+| DUT / TB | Design under test / testbench |
+| Scoreboard | Component that checks DUT output against expected |
+| DPI-C | SystemVerilog Direct Programming Interface to C |
+| SVA | SystemVerilog Assertions |
+| TLM | Transaction-Level Modeling |
+| LT / AT | Loosely-timed / approximately-timed TLM styles |
+| Virtual platform | Software model of a whole SoC that runs real software |
+| Co-simulation | Running two models/simulators together on the same stimulus |
+| Correlation | Quantifying how closely a model matches RTL / hardware |
+| PMU | Performance Monitoring Unit (hardware counters) |

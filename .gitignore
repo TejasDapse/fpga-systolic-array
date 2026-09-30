@@ -18,3 +18,4 @@ results.xml
 **/quartus/*.rpt
 **/quartus/*.summary
 **/quartus/greybox_tmp/
+**/quartus/build.log

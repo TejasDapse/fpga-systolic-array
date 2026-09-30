@@ -1,27 +1,56 @@
 # Systolic Array Matrix-Multiply Accelerator — Project Plan
 
 **Board:** Terasic DE10-Lite (Intel MAX 10, 10M50DAF484C7G, 50 MHz clock)
-**Duration:** 4 weeks (28 days) at ~2–3 hrs/day (~65 hrs total)
+**Duration:** 7 weeks (49 days) at ~2–3 hrs/day (~120 hrs total)
 **Companion notes:** [NOTES.md](NOTES.md) — read the listed sections *before* each day's work.
+**Ubuntu machine:** [UBUNTU_HANDOFF.md](UBUNTU_HANDOFF.md) — setup + hardware tasks for the build PC.
+
+---
+
+## 0. Phase Map
+
+| Phase | Weeks | Content | Where it runs |
+|---|---|---|---|
+| **1. Foundations** | 1 | Tool flow, 7-seg, UART TX/RX, FIFO | Sim (Mac/Ubuntu) + **board** |
+| **2. Compute engine** | 2 | PE, N×N array, skew buffers | Sim |
+| **3. System integration** | 3 | BRAM buffers, controller, **register-bus interface + perf counters**, UART bridge, host | Sim |
+| **4. Hardware & results** | 4 | Bring-up, 8×8, benchmarks | **Board** (Ubuntu) |
+| **5. Reference models & SystemC co-sim** | 5 | C++ bit-accurate model, SystemC/TLM-2.0 models, Verilator co-simulation | Sim only |
+| **6. UVM verification & correlation** | 6–7 | UVM env + DPI-C scoreboard, coverage, testcases, HW↔SW performance correlation | Sim + board counters |
+
+Phases 5–6 target **pre-silicon verification / performance-modeling roles**
+(e.g. "simulation & performance analysis, functional and performance correlation
+between HW and SW models, co-simulation in UVM and SystemC, testcases in UVM/C/C++").
+They are **simulation-only** — no board or wiring changes. The only RTL impact is
+the clean interface and counters added in Phase 3 (see §6).
 
 ---
 
 ## 1. Project Goal
 
 Build a hardware accelerator on the FPGA that computes **C = A × B** using a
-systolic array, driven from a Python script on your Mac over UART.
+systolic array, driven from a Python script over UART — then verify it the way
+industry does: C++/SystemC reference models, UVM, coverage, and correlation of
+predicted vs. measured performance.
 
 ```
-  Mac (Python)                          DE10-Lite FPGA
- ┌──────────────┐   UART 115200   ┌──────────────────────────────────────────┐
- │ host.py      │ ──────────────▶ │ UART RX → Cmd Parser → A/B Buffers (M9K) │
- │ - random A,B │                 │                          │               │
- │ - send/recv  │                 │                    Skew Buffers          │
- │ - compare    │                 │                          ▼               │
- │   w/ numpy   │                 │              N×N Systolic Array (PEs)    │
- │ - timing     │ ◀────────────── │ UART TX ← Result Buffer ← Drain logic    │
- └──────────────┘                 │ Controller FSM + Cycle Counter → HEX/LED │
-                                  └──────────────────────────────────────────┘
+  Host (Python)                          DE10-Lite FPGA
+ ┌──────────────┐   UART 115200   ┌─────────────────────────────────────────────┐
+ │ host.py      │ ──────────────▶ │ UART RX → UART-to-bus bridge ─┐             │
+ │ - random A,B │                 │                               ▼             │
+ │ - send/recv  │                 │   register bus ──▶ mm_core ───────────────┐ │
+ │ - compare    │                 │                  │ A/B buffers (M9K)      │ │
+ │   w/ numpy   │                 │                  │ skew → N×N PE array    │ │
+ │ - timing     │ ◀────────────── │ UART TX ◀────────│ C readout, FSM,        │ │
+ └──────────────┘                 │                  │ perf counters          │ │
+                                  │                  └────────────────────────┘ │
+                                  └─────────────────────────────────────────────┘
+
+  Verification (Phases 5–6, simulation only)
+   C++ ref model ◀─DPI-C─ UVM scoreboard ◀─ monitor ◀─ mm_core RTL ─▶ driver ◀─ sequences
+   SystemC TLM model ──▶ predicted cycles ──┐
+   RTL perf counters (sim) ─────────────────┼──▶ correlation report (% error)
+   FPGA perf counters (board) ──────────────┘
 ```
 
 ### Final Specification
@@ -34,38 +63,44 @@ systolic array, driven from a Python script on your Mac over UART.
 | Accumulator | Signed **int32** |
 | Matrix shapes | A: N×K, B: K×N, C: N×N, with K up to 64 (configurable) |
 | Clock | 50 MHz (single clock domain) |
-| Host link | UART 8N1 @ 115200 baud via a USB-to-UART adapter (3.3 V) on GPIO |
+| **Core interface** | Simple **valid/ready register bus** (32-bit data, 16-bit address) — see §6 |
+| **Perf counters** | total, compute, fill/drain, idle cycles; MAC count |
+| Host link | UART 8N1 @ 115200 via USB-to-UART adapter (3.3 V) on GPIO; bridged onto the register bus |
 | Status display | HEX0–HEX5 = compute cycle count; LEDR = FSM state / errors |
-| Verification | cocotb + Icarus/Verilator on Mac, NumPy golden model |
+| Verification | cocotb (Phases 1–4); C++/SystemC models, Verilator co-sim, UVM + DPI-C (Phases 5–6) |
 
 ### Deliverables (what goes on your resume / GitHub)
 1. Parameterized, verified RTL (SystemVerilog)
-2. Self-checking testbenches with random tests (1000+ random matrices pass)
+2. cocotb testbenches with random tests (1000+ random matrices pass)
 3. Working hardware demo: Python → FPGA → correct results
 4. Results table: resources (LEs, multipliers, M9K), Fmax, cycles, GOPS, utilization
-5. README with block diagram, dataflow diagram and performance analysis
+5. **C++ bit-accurate reference model** + **SystemC/TLM-2.0 functional & cycle-approximate models**
+6. **Verilator + SystemC co-simulation** comparing RTL against the SystemC model
+7. **UVM environment** (agent, sequences, DPI-C scoreboard, functional coverage, SVA assertions)
+8. **Verification plan + coverage report** (target ≥ 95 % functional coverage)
+9. **Performance correlation report:** SystemC-predicted vs. RTL-simulated vs. FPGA-measured cycles, % error
+10. README with block diagram, dataflow diagram and performance analysis
 
 ---
 
-## 2. Before Day 1 — Setup Checklist
+## 2. Setup Checklist
 
 ### Buy
 - [ ] USB-to-UART adapter, **3.3 V** logic (CP2102 or FT232RL), ~₹200–300
 - [ ] 3–4 female-to-female jumper wires
 
-### Mac (write code + simulate)
-- [ ] `brew install icarus-verilog verilator gtkwave`
-- [ ] `python3 -m venv ~/fpga-venv && source ~/fpga-venv/bin/activate`
-- [ ] `pip install cocotb numpy pyserial matplotlib pytest`
-- [ ] Editor: VS Code + "Verilog-HDL/SystemVerilog" extension
+### Simulation machine (Mac or Ubuntu)
+- [ ] Icarus Verilog (`brew install icarus-verilog` / `sudo apt install iverilog`)
+- [ ] `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+- [ ] Phase 5: SystemC 2.3.x/3.0 + Verilator ≥ 5.0 (`brew install systemc verilator`; on Ubuntu see UBUNTU_HANDOFF.md)
+- [ ] Phase 6: a UVM-capable simulator — **Questa-Intel FPGA Starter Edition** (free, ships with Quartus, Ubuntu) or **EDA Playground** (online)
 
-### Windows/Linux PC (synthesize + program)
-- [ ] Install **Quartus Prime Lite** (free) + **MAX 10 device support**
-- [ ] Install USB-Blaster driver (bundled with Quartus)
-- [ ] Download the **DE10-Lite CD** from Terasic (System Builder, user manual, pin list)
-- [ ] Plug in board → Quartus Programmer → "Hardware Setup" should list *USB-Blaster*
+### Build machine (Ubuntu 22.04 or Windows, x86-64)
+- [ ] **Quartus Prime Lite** + **MAX 10 device support**
+- [ ] USB-Blaster access (udev rule on Ubuntu — `tools/setup_ubuntu.sh` does it)
+- [ ] DE10-Lite CD from Terasic (System Builder, user manual)
 
-> Workflow: code & simulate on Mac → copy/sync (Git or USB drive) → compile & program on PC.
+> Everything can run on one Ubuntu PC. See [UBUNTU_HANDOFF.md](UBUNTU_HANDOFF.md).
 
 ---
 
@@ -73,131 +108,204 @@ systolic array, driven from a Python script on your Mac over UART.
 
 ```
 Systolic_Array/
-├── docs/
-│   ├── PLAN.md              ← this file
-│   ├── NOTES.md             ← concept notes
-│   └── results/             ← screenshots, plots, reports
-├── foundations/             ← Week 1 warm-up designs
-│   ├── 01_switch_led/
-│   ├── 02_blinky/
-│   ├── 03_hex_counter/
-│   └── 04_uart_echo/
+├── docs/          PLAN.md, NOTES.md, UBUNTU_HANDOFF.md, results/
+├── foundations/   Phase 1 board designs (01–04) + Quartus projects
 ├── rtl/
-│   ├── common/   sync_2ff.sv, hex7seg.sv, uart_rx.sv, uart_tx.sv
-│   ├── core/     pe.sv, systolic_array.sv, skew_buffer.sv, sram_sp.sv, mm_controller.sv, mm_core.sv
-│   └── top/      cmd_parser.sv, top_de10lite.sv
-├── tb/                      ← cocotb tests + Makefiles
-├── model/                   golden_model.py (NumPy reference)
-├── host/                    host.py (pyserial driver + benchmarks)
-└── quartus/                 systolic.qpf, systolic.qsf (pins), systolic.sdc (timing)
+│   ├── common/    sync_2ff, tick_gen, hex7seg, uart_tx, uart_rx, fifo_sync
+│   ├── core/      pe, systolic_array, skew_buffer, sram_sp, mm_controller, mm_regs, mm_core
+│   └── top/       uart_bus_bridge, top_de10lite
+├── tb/            cocotb tests (pytest)
+├── model/
+│   ├── golden_model.py          NumPy reference (Phases 2–4)
+│   ├── cpp/                     bit-accurate C++ model + analytical perf model (Phase 5)
+│   └── systemc/                 SystemC TLM-2.0 LT + cycle-approximate models (Phase 5)
+├── cosim/         Verilator + SystemC co-simulation harness (Phase 5)
+├── uvm/           UVM env, agents, sequences, tests, DPI-C glue, coverage (Phase 6)
+├── host/          Python board scripts + C++ host test (Phase 6)
+├── quartus/       systolic project (.qpf/.qsf/.sdc) for the full design
+└── tools/         gen_quartus.py, setup_ubuntu.sh, build.sh
 ```
 
 ---
 
 ## 4. Week-by-Week Plan
 
-### WEEK 1 — Foundations: Tools, Verilog, Board, UART
-**Goal:** Become comfortable with the full flow and build a working UART (reused later).
+### WEEK 1 — Phase 1: Foundations  ✅ RTL + sim done · ⏳ board
+**Goal:** Comfortable with the full flow; working UART (reused later).
 **Read first:** NOTES §1–§8, §10–§11
 
 | Day | Task | Done when… |
 |---|---|---|
-| 1 | Complete setup checklist. Read NOTES §1–§4 (FPGA basics, board, flow). | Quartus sees USB-Blaster; `iverilog -V` works on Mac |
-| 2 | Read NOTES §5–§6 (Verilog, comb vs seq). Write & simulate a mux, adder, 4-bit counter in Icarus; view in GTKWave. | You can explain `=` vs `<=` |
-| 3 | **Project 01 – switches → LEDs.** Generate pin file with System Builder, compile, program `.sof`. | Flipping SW[i] lights LEDR[i] |
-| 4 | **Project 02 – blinky** (counter + clock-enable tick). **Project 03 – hex counter** (hex7seg decoder on HEX0–HEX3). | LED blinks at 1 Hz; HEX counts up |
-| 5 | Read NOTES §7–§8 (timing, FSMs). Add 2-FF synchronizer for KEY; build a small FSM (e.g., KEY0 = start/stop counter). Check Timing Analyzer report. | Slack ≥ 0; you can explain metastability |
-| 6 | Read NOTES §10 (UART). Write `uart_tx.sv`, simulate, then send "HELLO\r\n" from FPGA every second. Wire adapter; view on Mac with `screen /dev/tty.usbserial-XXXX 115200`. | "HELLO" appears on Mac |
-| 7 | Write `uart_rx.sv` (16× oversampling). **Project 04 – UART echo.** Test with a Python pyserial loopback script sending 10,000 random bytes. | 0 byte errors |
+| 1 | Setup checklist. Read NOTES §1–§4. | Quartus sees USB-Blaster; `iverilog -V` works |
+| 2 | Read NOTES §5–§6. Simulate a mux, adder, counter; view in GTKWave. | You can explain `=` vs `<=` |
+| 3 | **01 – switches → LEDs.** Verify pins with System Builder, compile, program. | SW[i] lights LEDR[i] |
+| 4 | **02 – blinky**, **03 – hex counter**. | LED blinks at 1 Hz; HEX counts |
+| 5 | Read NOTES §7–§8. KEY synchronizer + RUN/PAUSE FSM (in 03). Check Timing Analyzer. | Slack ≥ 0 |
+| 6 | Read NOTES §10. Study `uart_tx.sv`; wire the adapter. | Adapter wired, `screen` connects |
+| 7 | **04 – UART echo**; `host/uart_echo_test.py`, 10,000 bytes. | 0 byte errors |
 
-**Week 1 checkpoint — you should be able to answer:**
-- What is a LUT? What is inside an FPGA?
-- Blocking vs non-blocking assignment — why does it matter?
-- What is setup time / slack / Fmax?
-- Why do we synchronize asynchronous inputs? What is metastability?
-- How does a UART receiver find the middle of a bit?
+**Checkpoint:** LUT? `=` vs `<=`? setup/slack/Fmax? metastability? UART mid-bit sampling?
 
 ---
 
-### WEEK 2 — The Compute Engine (mostly simulation on Mac)
+### WEEK 2 — Phase 2: Compute Engine (simulation)
 **Goal:** A verified, parameterized N×N systolic array.
 **Read first:** NOTES §12–§15
 
 | Day | Task | Done when… |
 |---|---|---|
-| 8 | Read NOTES §12–§14. **On paper:** trace a 2×2 × K=2 example cycle by cycle (fill the table in NOTES §14). | You can predict which PE multiplies what at each cycle |
-| 9 | Write `pe.sv` (MAC with pass-through registers, `clear`, `en`). cocotb test: 1,000 random signed int8 pairs incl. −128×−128. | PE test passes |
-| 10 | Write `systolic_array.sv` for 2×2 using `generate`. Testbench drives *already-skewed* inputs manually. Study waveform. | 2×2 result matches NumPy |
-| 11 | Write `skew_buffer.sv` (row i delayed by i cycles — triangular shift registers). Parameterize array to N. | 4×4 passes with un-skewed inputs |
-| 12 | Write `model/golden_model.py`. Random tests: N=4 and 8, random K ∈ [1, 64], edge cases (all −128, all 127, zeros, identity). | 500+ random tests pass |
-| 13 | **Synthesis-only check** on PC: compile array for N=4 and N=8. Record LEs, embedded multipliers, Fmax in `docs/results/`. | Fmax > 50 MHz for N=8 |
-| 14 | Buffer / catch-up day. Review NOTES §13 dataflows; write 1-page explanation in your own words. | Checkpoint questions answered |
+| 8 | Trace the 2×2 × K=2 example on paper; fill the 3×3 table in NOTES §14. | You can predict every PE's MAC per cycle |
+| 9 | `pe.sv` (MAC + pass-through regs, `clear`, `en`) + cocotb test incl. −128×−128. | PE test passes |
+| 10 | `systolic_array.sv` 2×2 via `generate`; hand-skewed inputs. | 2×2 matches NumPy |
+| 11 | `skew_buffer.sv`; parameterize to N. | 4×4 passes with un-skewed inputs |
+| 12 | `model/golden_model.py`; random N=4/8, K∈[1,64], edge cases. | 500+ random tests pass |
+| 13 | Synthesis-only compile N=4, N=8; record LEs, multipliers, Fmax. | Fmax > 50 MHz @ N=8 |
+| 14 | Buffer day; write a 1-page dataflow explanation. | Checkpoint answered |
 
-**Week 2 checkpoint:**
-- Why is it called "systolic"? Why is it efficient?
-- Output-stationary vs weight-stationary — trade-offs?
-- Why must inputs be skewed? What does the skew buffer look like?
-- How many cycles does an N×N array take for K-length dot products? (K + 2N − 2)
-- Why is the accumulator 32 bits when inputs are 8 bits?
+**Checkpoint:** why "systolic"? OS vs WS? why skew? latency K + 2N − 2? why int32 accumulators?
 
 ---
 
-### WEEK 3 — System Integration: Memory, Control, UART Protocol, Host
-**Goal:** Complete design passing full-system simulation + Python host ready.
-**Read first:** NOTES §9, §8 (again), §16
+### WEEK 3 — Phase 3: System Integration (simulation)
+**Goal:** Complete design passing full-system simulation, with a **verification-friendly interface**.
+**Read first:** NOTES §9, §8, §16
 
 | Day | Task | Done when… |
 |---|---|---|
-| 15 | Write `sram_sp.sv` (inferred M9K RAM, 1-cycle read latency). Instantiate A-buffer (N×K bytes), B-buffer (K×N bytes). Test write-then-read. | Quartus infers M9K (check report) |
-| 16 | Write `mm_controller.sv` FSM: `IDLE → CLEAR → COMPUTE → DRAIN → DONE`, plus 32-bit **cycle counter**. | FSM waveform matches your state diagram |
-| 17 | Write `mm_core.sv` = buffers + skew + array + controller + result readout. End-to-end sim: preload memories, pulse `start`, check C. | 200 random tests pass |
-| 18 | Write `cmd_parser.sv` implementing the **UART protocol** (see §5 below). | Unit test of each command passes |
-| 19 | Write `top_de10lite.sv` (clock, reset, UART pins, HEX shows cycle count, LEDs show state). Full-system sim with a cocotb UART driver (use a fast baud parameter in sim). | One matrix multiply works through UART in sim |
-| 20 | Write `host/host.py`: open port, send K, A, B, GO, read C + cycle count, compare with NumPy, print PASS/FAIL. | Script runs (hardware test next week) |
-| 21 | Buffer day. Clean code, add comments, commit to Git. | Everything committed |
+| 15 | `sram_sp.sv` (inferred M9K, 1-cycle read). A-buffer (N×K), B-buffer (K×N). | Quartus infers M9K |
+| 16 | `mm_controller.sv` FSM: `IDLE → CLEAR → COMPUTE → DRAIN → DONE`. | FSM matches your diagram |
+| 17 | **`mm_regs.sv` + `mm_core.sv`:** register-bus slave (§6 map), buffers + skew + array + controller, **perf counters** (§6). | 200 random tests through the bus pass |
+| 18 | `uart_bus_bridge.sv`: UART commands → bus reads/writes (§5). | Unit test of each command passes |
+| 19 | `top_de10lite.sv` (clock, reset, UART, HEX = compute cycles, LEDs = state). Full-system sim via UART. | One matmul works through UART in sim |
+| 20 | `host/host.py`: write K/A/B, start, poll status, read C + counters, compare with NumPy. | Script ready for hardware |
+| 21 | Buffer day; clean up, commit. | Everything committed |
 
-**Week 3 checkpoint:**
-- How is Block RAM different from registers? Why the 1-cycle read latency?
-- Draw your controller FSM from memory.
-- Where is your critical path likely to be?
+**Checkpoint:** BRAM vs registers? draw the FSM? why a register bus instead of ad-hoc ports?
 
 ---
 
-### WEEK 4 — Hardware Bring-up, Scaling, Measurement, Documentation
+### WEEK 4 — Phase 4: Hardware Bring-up & Results (board, Ubuntu)
 **Goal:** Working demo on the board with measured results.
 **Read first:** NOTES §16–§18
 
 | Day | Task | Done when… |
 |---|---|---|
-| 22 | Create final Quartus project: `.qsf` pins (incl. GPIO UART pins), `.sdc` (50 MHz). Compile N=4. Fix any timing violations. Program board. | Slack ≥ 0, board programmed |
-| 23 | Run `host.py` on hardware for N=4. If failing → SignalTap on UART RX/cmd parser/FSM state. | 100 random hardware tests pass |
-| 24 | Scale to **N=8**. Recompile, re-verify in sim and on hardware. (Optional: try N=16.) | 1,000 hardware tests pass |
-| 25 | **Benchmarks:** compute cycles vs K; utilization = K/(K+2N−2); GOPS at 50 MHz; UART transfer time vs compute time; compare vs NumPy on Mac. Make plots with matplotlib. | Results table + 2 plots |
-| 26 | **Stretch (pick one):** (a) host-side tiling for 32×32 / 64×64 matrices, (b) double buffering (load next B while computing), (c) raise Fmax with a PLL + extra pipelining. | Stretch feature works |
-| 27 | Write `README.md`: overview, block diagram, dataflow, how to run, results, lessons learned. Record a short demo video. | README complete |
-| 28 | **Interview prep:** go through NOTES §18 questions out loud; explain the project in 2 minutes and in 10 minutes. | You can whiteboard the whole design |
+| 22 | `quartus/` project for the full design; compile N=4; fix timing; program. | Slack ≥ 0 |
+| 23 | `host.py` on hardware for N=4; SignalTap if needed. | 100 random HW tests pass |
+| 24 | Scale to **N=8**; re-verify sim + HW. | 1,000 HW tests pass |
+| 25 | Benchmarks: cycles vs K, utilization, GOPS, UART vs compute time; plots. | Results table + 2 plots |
+| 26 | Stretch: host tiling / double buffering / PLL for higher Fmax. | Stretch works |
+| 27 | README: overview, diagrams, how to run, results. | README complete |
+| 28 | Mock interview on Phases 1–4. | 2-min and 10-min pitch ready |
 
 ---
 
-## 5. UART Command Protocol (host ↔ FPGA)
+### WEEK 5 — Phase 5: Reference Models & SystemC Co-simulation (simulation only)
+**Goal:** Software models of the accelerator and a co-simulation proving RTL == model.
+**Read first:** NOTES §20–§24
 
-All multi-byte values are little-endian.
+| Day | Task | Done when… |
+|---|---|---|
+| 29 | Read NOTES §20–§21. **C++ bit-accurate model** `model/cpp/mm_ref.{h,cpp}` (int8×int8→int32, wrap semantics identical to RTL). Shared test-vector files (`.hex`) so NumPy, C++, RTL all read the same inputs. | C++ == NumPy on 1,000 vectors |
+| 30 | **Analytical performance model** in C++: `cycles(N, K) = K + 2N − 2 + overhead`; define what each perf counter should read. | Predictions for N∈{4,8}, K∈{1..64} |
+| 31 | Read NOTES §22–§23. **SystemC functional model** (`model/systemc/mm_lt.cpp`): TLM-2.0 target socket, `b_transport`, same register map as RTL (§6), loosely-timed. | SystemC test writes A/B, starts, reads C correctly |
+| 32 | **Cycle-approximate SystemC model** (`mm_ca.cpp`): SC_THREAD per stage, `wait(clk)` per cycle; exposes the same perf counters. | Predicted cycles within ±2 of the analytical model |
+| 33 | Read NOTES §24. **Verilator → SystemC**: build `mm_core` as a SystemC module; SystemC testbench drives RTL and model with the same stimulus. | Co-sim harness builds and runs 1 test |
+| 34 | **Co-sim regression:** 1,000 random cases; compare C and perf counters RTL vs SystemC; write CSV. | 0 functional mismatches; cycle error table |
+| 35 | Buffer day; document the modeling approach. | Phase 5 checkpoint answered |
 
-| Command | Byte sent | Payload (host → FPGA) | Response (FPGA → host) |
+**Checkpoint:** LT vs AT modeling? what is `b_transport`? delta cycle? why a bit-accurate model? how does Verilator co-sim differ from event-driven simulation?
+
+---
+
+### WEEK 6 — Phase 6a: UVM Environment (simulation only)
+**Goal:** A reusable, coverage-driven UVM testbench for `mm_core`.
+**Read first:** NOTES §25–§26
+
+| Day | Task | Done when… |
+|---|---|---|
+| 36 | Set up UVM simulator (Questa-Intel Starter on Ubuntu, or EDA Playground). Run a hello-world UVM test. Write the **verification plan** (features → tests → coverage). | `uvm_info` prints; vplan drafted |
+| 37 | `mm_bus_if` interface (+ clocking block), `bus_item` (sequence item), `mm_job` (N, K, A, B) with **constraints**. | Items randomize correctly |
+| 38 | **Agent:** sequencer, driver (drives bus), monitor (publishes via `uvm_analysis_port`). | Driver writes/reads registers in sim |
+| 39 | **Scoreboard with DPI-C:** export C++ `mm_ref()` via `import "DPI-C"`, compare C matrix + counters. | Scoreboard reports PASS on a directed job |
+| 40 | `mm_env`, `base_test`, `random_job_seq`; factory + `uvm_config_db`. | First random UVM test passes |
+| 41 | **Functional coverage** (covergroups: K bins, value corners −128/0/127, back-to-back jobs, reset during compute) + **SVA** on bus handshake and FSM. | Coverage report generated |
+| 42 | Buffer day. | Phase 6a checkpoint answered |
+
+---
+
+### WEEK 7 — Phase 6b: Testcases & HW/SW Correlation
+**Goal:** Close coverage, correlate performance across model / RTL / FPGA.
+
+| Day | Task | Done when… |
+|---|---|---|
+| 43 | **Directed UVM tests:** identity, zeros, all −128, all 127, K=1, K=K_MAX, back-to-back, start-while-busy, reset mid-compute. | All directed tests pass |
+| 44 | **Constrained-random regression** script (many seeds); coverage closure. | Functional coverage ≥ 95 % |
+| 45 | **C/C++ testcase on hardware:** `host/mm_host.cpp` drives the FPGA over UART with the same `.hex` vectors, reads perf counters. (Ubuntu + board) | C++ host test passes on board |
+| 46 | **Performance correlation:** SystemC-predicted vs RTL-sim vs FPGA-measured cycles for N∈{4,8}, K sweep; error %; explain any gap. | Correlation table + plot, error < 5 % |
+| 47 | Write verification report: vplan, test list, coverage, bugs found, correlation. | `docs/results/verification_report.md` |
+| 48 | Update README with Phases 5–6 results. | README updated |
+| 49 | Mock interview focused on verification (NOTES §27). | You can whiteboard the UVM env + co-sim flow |
+
+---
+
+## 5. UART Command Protocol (host ↔ UART-to-bus bridge)
+
+The UART bridge turns simple commands into register-bus transactions, so the
+host, the UVM driver and the SystemC model all use the **same register map** (§6).
+
+| Command | Bytes sent | Response |
+|---|---|---|
+| Write word | `'W'` + addr (2 B) + data (4 B) | `'K'` |
+| Read word | `'R'` + addr (2 B) | data (4 B) |
+| Write block | `'B'` + addr (2 B) + len (2 B) + len bytes | `'K'` |
+| Read block | `'D'` + addr (2 B) + len (2 B) | len bytes |
+| Ping | `'P'` | `'K'` + N (1 B) + K_MAX (1 B) |
+
+All multi-byte values little-endian. Unknown command → `'E'` + error LED.
+
+---
+
+## 6. Core Interface, Register Map & Perf Counters (Phase 3 — RTL impact of Phases 5–6)
+
+### Register bus (valid/ready, single clock)
+| Signal | Dir (core) | Meaning |
+|---|---|---|
+| `bus_valid` | in | request valid |
+| `bus_ready` | out | core accepts request this cycle |
+| `bus_write` | in | 1 = write, 0 = read |
+| `bus_addr[15:0]` | in | byte address |
+| `bus_wdata[31:0]` | in | write data |
+| `bus_rvalid` | out | read data valid (1+ cycles after accept) |
+| `bus_rdata[31:0]` | out | read data |
+
+This one interface is driven by the UART bridge (board), the cocotb tests, the
+UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
+
+### Register map
+| Address | Name | Access | Description |
 |---|---|---|---|
-| Ping | `'P'` (0x50) | — | `'K'` + N (1 byte) + K_MAX (1 byte) |
-| Set K | `'S'` | K (1 byte) | `'K'` |
-| Load A | `'A'` | N×K int8, row-major | `'K'` |
-| Load B | `'B'` | K×N int8, row-major | `'K'` |
-| Go | `'G'` | — | `'D'` when done |
-| Read C | `'R'` | — | N×N int32 (row-major), 4 bytes each |
-| Read cycles | `'C'` | — | 4-byte cycle count |
+| `0x0000` | `CTRL` | W | bit0 = START (self-clearing), bit1 = SOFT_RESET |
+| `0x0004` | `STATUS` | R | bit0 = BUSY, bit1 = DONE (clears on START) |
+| `0x0008` | `CFG_K` | R/W | K (1 … K_MAX) |
+| `0x000C` | `INFO` | R | [7:0] = N, [15:8] = K_MAX, [31:16] = version |
+| `0x0010` | `PERF_TOTAL` | R | cycles from START to DONE |
+| `0x0014` | `PERF_COMPUTE` | R | cycles with the array enabled |
+| `0x0018` | `PERF_FILLDRAIN` | R | compute cycles where not all PEs are active |
+| `0x001C` | `PERF_IDLE` | R | cycles in IDLE since reset (saturating) |
+| `0x0020` | `PERF_MACS` | R | useful MACs issued (should equal N·N·K) |
+| `0x1000–0x1FFF` | `A_BUF` | W | A, row-major, one int8 per byte |
+| `0x2000–0x2FFF` | `B_BUF` | W | B, row-major, one int8 per byte |
+| `0x3000–0x3FFF` | `C_BUF` | R | C, row-major, one int32 per word |
 
-Unknown command → FPGA replies `'E'` and lights an error LED.
+### Why this matters
+- **UVM:** a single bus agent can drive and monitor everything.
+- **SystemC:** the TLM model implements the same map, so the same test runs on both.
+- **Correlation:** the same counters exist in the SystemC model, RTL sim and FPGA.
 
 ---
 
-## 6. Expected Results (sanity targets)
+## 7. Expected Results (sanity targets)
 
 | Metric | Expected (N=8, K=64, 50 MHz) |
 |---|---|
@@ -205,30 +313,36 @@ Unknown command → FPGA replies `'E'` and lights an error LED.
 | Peak throughput | 64 MACs/cycle × 50 MHz = **3.2 GMAC/s = 6.4 GOPS** |
 | Array utilization | 64 / 78 ≈ **82 %** |
 | Embedded multipliers | ~64 (of 144 available) |
-| UART time for A + B | 1,024 bytes ÷ 11,520 B/s ≈ **89 ms** vs compute ≈ **1.6 µs** |
+| UART time for A + B | 1,024 B ÷ 11,520 B/s ≈ **89 ms** vs compute ≈ **1.6 µs** |
+| SystemC vs RTL cycle error | target **0–2 cycles** (cycle-approximate model) |
+| Functional coverage | target **≥ 95 %** |
 
-> The last row is a key insight for interviews: the design is **I/O-bound**, not
-> compute-bound. This is why real accelerators use high-bandwidth memory and
-> data reuse (see NOTES §16 Roofline).
+> The design is **I/O-bound** over UART — a key interview insight (NOTES §16).
 
 ---
 
-## 7. Risk List & Mitigations
+## 8. Risk List & Mitigations
 
 | Risk | Mitigation |
 |---|---|
-| No Quartus on Mac | Do all simulation on Mac; only compile/program on the PC |
-| UART garbage characters | Check baud divider (50 MHz / 115200 ≈ 434), common GND, TX↔RX crossed, 3.3 V jumper |
-| Off-by-one in skew / timing | Trace the 2×2 table on paper (Day 8); compare waveforms cycle by cycle |
-| Signed arithmetic wrong | Declare `logic signed`, use `$signed()`, test −128×−128 and −128×127 |
-| Timing failure at N=8/16 | Register multiplier output (2-stage PE), reduce N, check critical path in Timing Analyzer |
-| Works in sim, fails on HW | Missing synchronizer, uninitialized regs, reset polarity (KEY is active-low) → use SignalTap |
+| No Quartus on Mac | Build on Ubuntu/Windows; simulate anywhere |
+| UART garbage | Baud divider 434, common GND, TX↔RX crossed, 3.3 V jumper |
+| Off-by-one in skew / BRAM latency | Paper trace (Day 8); compare waveforms cycle by cycle |
+| Signed arithmetic wrong | `logic signed`, `$signed()`, test −128×−128 |
+| Timing failure at N=8/16 | 2-stage PE, reduce N, check critical path |
+| Works in sim, fails on HW | Synchronizers, reset polarity, SignalTap |
+| Ubuntu apt Verilator too old (4.x) | Build Verilator ≥ 5 from source (UBUNTU_HANDOFF.md) |
+| No free UVM simulator locally | Questa-Intel Starter (free license) or EDA Playground |
+| SystemC model drifts from RTL | Same register map + shared `.hex` vectors + co-sim regression in CI |
 
 ---
 
-## 8. Progress Tracker
+## 9. Progress Tracker
 
-- [ ] Week 1 — Foundations complete (UART echo works)
-- [ ] Week 2 — N×N array verified in simulation
-- [ ] Week 3 — Full system verified in simulation + host script ready
-- [ ] Week 4 — Hardware demo, benchmarks, README done
+- [x] Phase 1 — RTL + cocotb tests pass (13/13, Icarus 13)
+- [ ] Phase 1 — board: designs 01–04 work, UART echo 0 errors (Ubuntu)
+- [ ] Phase 2 — N×N array verified in simulation
+- [ ] Phase 3 — full system (register bus + perf counters) verified in simulation
+- [ ] Phase 4 — hardware demo, benchmarks, README
+- [ ] Phase 5 — C++ + SystemC models, Verilator co-sim regression clean
+- [ ] Phase 6 — UVM env, coverage ≥ 95 %, correlation report
