@@ -27,3 +27,4 @@ model/cpp/perf_table
 model/systemc/build/
 cosim/build/
 uvm/build/
+uvm/*.log
