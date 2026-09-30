@@ -234,7 +234,7 @@ Systolic_Array/
 
 ---
 
-### WEEK 7 — Phase 6b: Testcases & HW/SW Correlation
+### WEEK 7 — Phase 6b: Testcases & HW/SW Correlation  ✅ sim done — [report](results/verification_report.md) · ⏳ Days 45–46 on the board
 **Goal:** Close coverage, correlate performance across model / RTL / FPGA.
 
 | Day | Task | Done when… |
@@ -345,4 +345,4 @@ UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
 - [x] Phase 3 — full system (register bus + perf counters) verified in simulation (N = 4, 8, over UART)
 - [ ] Phase 4 — hardware demo, benchmarks, README
 - [x] Phase 5 — C++ + SystemC models, Verilator co-sim regression clean (2 × 1000 jobs, 0 mismatches, 0-cycle error)
-- [ ] Phase 6 — UVM env, coverage ≥ 95 %, correlation report
+- [x] Phase 6 — UVM env, coverage ≥ 95 % (100 %), correlation report (model/RTL; FPGA column pending the board)

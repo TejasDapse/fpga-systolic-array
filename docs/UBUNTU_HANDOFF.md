@@ -19,7 +19,8 @@ and the **hardware tasks** to do next. Plan: [PLAN.md](PLAN.md) · Concepts: [NO
 | Pin numbers in `tools/gen_quartus.py` | ⚠️ **Written from the DE10-Lite manual, not yet verified** |
 | Quartus on this machine | ❌ Not installed yet (Intel blocks scripted download — browser only) |
 | Board bring-up (Phase 1, then Phase 4) | ⏳ **Your job — see §4 and §4b** |
-| Phases 5–6 | ⏳ Not started |
+| Phase 5 (C++/SystemC models, Verilator co-sim) | ✅ Done in sim — `docs/results/phase5_models.md` |
+| Phase 6 (UVM, coverage, correlation) | ✅ Done in sim — `docs/results/verification_report.md`; FPGA column pending (§4 Task 7) |
 
 The Mac is used for writing code + simulation. **This Ubuntu machine is used
 for Quartus compile, programming the board, and hardware tests** (it can also
@@ -163,6 +164,18 @@ If `host.py` reports wrong C but correct perf counters, rerun `tb/test_mm_core.p
 same matrices; if timing fails at N=8, register the multiplier output in `pe.sv` (2-stage PE)
 and update `model/golden_model.py::expected_perf`.
 
+### Task 7 — Phase 6: FPGA side of the performance correlation (after Task 6)
+
+With the accelerator programmed (N = 4, then again with N = 8):
+```bash
+python3 model/vectors.py                       # if model/vectors/ is missing
+make -C host                                   # builds host/mm_host (C++)
+host/mm_host --port /dev/ttyUSB0 --vectors model/vectors/n4.hex --count 200 --csv docs/results/fpga_perf_n4.csv
+python3 tools/correlate.py                     # fills the FPGA column in docs/results/correlation.md
+```
+Expected: `200/200 jobs correct` and 0 % error vs the model. Commit the CSV and `correlation.md`.
+(Dry run without a board: `python3 host/fake_serial.py --n 4 &` prints a `/dev/pts/N` to use as `--port`.)
+
 ---
 
 ## 5. Rules for this repo
@@ -191,7 +204,16 @@ These are planned, not yet implemented — listed so the Ubuntu side knows what'
   (`rtl/core/mm_regs.sv`, [PLAN.md §6](PLAN.md)); UART is a bridge onto it (PLAN §5).
   Board wiring did **not** change.
 - **Phase 4 (board):** ✅ `quartus/` project exists — see §4 Task 6; SignalTap may be needed.
-- **Phase 5 (Ubuntu tools):** Verilator ≥ 5 and SystemC for co-simulation.
+- **Phases 5–6 tools on this machine (no sudo):** everything comes from conda-forge plus the
+  Accellera UVM source:
+  ```bash
+  CONDA_NO_PLUGINS=true CONDA_SOLVER=classic conda install -y -n fpga -c conda-forge \
+      --override-channels systemc=3.0.2 z3prover        # z3 = constraint solver for randomize()
+  git clone --depth 1 https://github.com/accellera-official/uvm-core ~/tools/uvm-core
+  ```
+  Native code is compiled with the system `g++` 11 (the Makefiles set `CXX=/usr/bin/g++`); the conda
+  GCC 16 does not match Ubuntu 22.04's glibc headers. UVM runs on **Verilator** (no Questa needed).
+- **Phase 5 (Ubuntu tools, apt route):** Verilator ≥ 5 and SystemC for co-simulation.
   Ubuntu 22.04's `apt` Verilator is 4.x — too old. Build from source:
   ```bash
   sudo apt install -y git help2man perl python3 make autoconf g++ flex bison ccache \
@@ -200,12 +222,11 @@ These are planned, not yet implemented — listed so the Ubuntu side knows what'
   git checkout stable && autoconf && ./configure && make -j"$(nproc)" && sudo make install
   verilator --version        # expect 5.x
   ```
-- **Phase 6 (Ubuntu tools):** UVM needs **Questa – Intel FPGA Starter Edition** (free).
+- **Phase 6 (optional, not tried):** the UVM code is standard UVM and should also run on **Questa – Intel FPGA Starter Edition** (free).
   Install it with Quartus, request a free license from the **Intel FPGA Self-Service
   Licensing Center**, and point the license environment variable at it as Intel's
   instructions describe. Then run `vsim -version`.
-- **Phase 6 (board):** a C++ host test (`host/mm_host.cpp`) and reading the perf counters
-  from the FPGA for the HW↔SW correlation report.
+- **Phase 6 (board):** ✅ `host/mm_host.cpp` exists — see §4 Task 7.
 
 ---
 

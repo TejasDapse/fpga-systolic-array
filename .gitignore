@@ -28,3 +28,4 @@ model/systemc/build/
 cosim/build/
 uvm/build/
 uvm/*.log
+host/mm_host
