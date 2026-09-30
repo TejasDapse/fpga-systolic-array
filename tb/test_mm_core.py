@@ -3,6 +3,7 @@
 The same register map is used by the UART bridge, host.py and (later) UVM / SystemC.
 """
 import os
+from pathlib import Path
 
 import cocotb
 import numpy as np
@@ -12,9 +13,12 @@ from cocotb.triggers import ClockCycles, FallingEdge
 from tb_utils import CORE, run_sim, start_clock, to_signed
 from model.golden_model import edge_cases, expected_perf, matmul_int32, random_int8
 from model import regmap as rm
+from model.vectors import make_jobs, read_vectors, write_vectors
 
 K_MAX = 64
 N_RANDOM = int(os.environ.get("MM_RANDOM", "200"))    # random jobs per N
+N_VECTORS = int(os.environ.get("MM_VECTORS", "100"))  # shared-vector jobs per N
+VECTOR_DIR = Path(__file__).resolve().parent.parent / "model" / "vectors"
 
 
 class Bus:
@@ -163,6 +167,24 @@ async def soft_reset_mid_compute(dut):
     # Buffers survive a soft reset (RAM has no reset), so a fresh job still works.
     c, perf = await run_job(bus, n)
     check("after_soft_reset", n, a, b, c, perf)
+
+
+@cocotb.test()
+async def shared_vectors(dut):
+    """Same vector file as the C++ / SystemC models (model/vectors.py)."""
+    bus, n = await setup(dut)
+    path = VECTOR_DIR / f"n{n}.hex"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_vectors(path, make_jobs(n, 1000, seed=2026 + n))
+    for idx, job in enumerate(read_vectors(path)):
+        if idx == N_VECTORS:
+            break
+        await load(bus, n, job["a"], job["b"])
+        c, perf = await run_job(bus, n)
+        assert np.array_equal(c, job["c"]), f"vector {idx}: C mismatch"
+        for key, value in job["perf"].items():
+            assert perf[key] == value, f"vector {idx}: {key} = {perf[key]}, expected {value}"
 
 
 @pytest.mark.parametrize("n", [4, 8])

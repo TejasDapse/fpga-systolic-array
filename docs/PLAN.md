@@ -200,7 +200,7 @@ Systolic_Array/
 
 ---
 
-### WEEK 5 — Phase 5: Reference Models & SystemC Co-simulation (simulation only)
+### WEEK 5 — Phase 5: Reference Models & SystemC Co-simulation (simulation only)  ✅ done — [results](results/phase5_models.md)
 **Goal:** Software models of the accelerator and a co-simulation proving RTL == model.
 **Read first:** NOTES §20–§24
 
@@ -344,5 +344,5 @@ UVM driver, and maps 1:1 onto a TLM-2.0 generic payload (SystemC).
 - [x] Phase 2 — N×N array verified in simulation (N = 2, 4, 8)
 - [x] Phase 3 — full system (register bus + perf counters) verified in simulation (N = 4, 8, over UART)
 - [ ] Phase 4 — hardware demo, benchmarks, README
-- [ ] Phase 5 — C++ + SystemC models, Verilator co-sim regression clean
+- [x] Phase 5 — C++ + SystemC models, Verilator co-sim regression clean (2 × 1000 jobs, 0 mismatches, 0-cycle error)
 - [ ] Phase 6 — UVM env, coverage ≥ 95 %, correlation report

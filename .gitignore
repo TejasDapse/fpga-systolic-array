@@ -19,3 +19,11 @@ results.xml
 **/quartus/*.summary
 **/quartus/greybox_tmp/
 **/quartus/build.log
+
+# Generated test vectors (python3 model/vectors.py) and native build output
+model/vectors/
+model/cpp/test_mm_ref
+model/cpp/perf_table
+model/systemc/build/
+cosim/build/
+uvm/build/

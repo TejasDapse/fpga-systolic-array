@@ -16,7 +16,7 @@ co-simulation and a UVM testbench, with performance correlated across model, RTL
 | 2. Compute engine | PE, N×N array, skew buffers | ✅ simulated |
 | 3. Integration | BRAM buffers, controller FSM, register bus + perf counters, UART bridge, host | ✅ simulated, ⏳ hardware |
 | 4. Hardware & results | Bring-up, 8×8, benchmarks | ⏳ |
-| 5. Models & co-sim | C++ bit-accurate model, SystemC/TLM-2.0, Verilator co-simulation | ⏳ |
+| 5. Models & co-sim | C++ bit-accurate model, SystemC/TLM-2.0, Verilator co-simulation | ✅ [results](docs/results/phase5_models.md) |
 | 6. UVM & correlation | UVM env + DPI-C scoreboard, coverage, HW↔SW performance correlation | ⏳ |
 
 ## Layout
@@ -27,7 +27,10 @@ rtl/core/     pe, systolic_array, skew_buffer, sram_sp, mm_controller, mm_regs, 
 rtl/top/      uart_bus_bridge, top_de10lite
 quartus/      accelerator Quartus project (generated)
 foundations/  four warm-up board designs (+ Quartus projects) and a step-by-step README
-model/        golden_model.py (NumPy reference + perf expectations), regmap.py
+model/        golden_model.py, regmap.py, vectors.py (shared test vectors)
+  cpp/        bit-accurate C++ model + analytical perf model
+  systemc/    TLM-2.0 loosely-timed + cycle-approximate models
+cosim/        Verilator (--sc) RTL vs SystemC co-simulation
 tb/           cocotb testbenches (pytest; SLOW=1 adds the N=8 full-system sim)
 host/         host.py (accelerator tests + benchmarks, --fake = no board), uart_echo_test.py
 tools/        gen_quartus.py (Quartus files + pin table), setup_ubuntu.sh, build.sh
