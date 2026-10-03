@@ -29,3 +29,6 @@ cosim/build/
 uvm/build/
 uvm/*.log
 host/mm_host
+
+# macOS
+.DS_Store

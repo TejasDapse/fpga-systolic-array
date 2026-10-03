@@ -22,9 +22,8 @@ and the **hardware tasks** to do next. Plan: [PLAN.md](PLAN.md) · Concepts: [NO
 | Phase 5 (C++/SystemC models, Verilator co-sim) | ✅ Done in sim — `docs/results/phase5_models.md` |
 | Phase 6 (UVM, coverage, correlation) | ✅ Done in sim — `docs/results/verification_report.md`; FPGA column pending (§4 Task 7) |
 
-The Mac is used for writing code + simulation. **This Ubuntu machine is used
-for Quartus compile, programming the board, and hardware tests** (it can also
-run all simulations).
+The Mac is used only for editing files, git and slides. **This Ubuntu machine runs
+everything else**: all simulations, Quartus compile, programming the board, and hardware tests.
 
 ---
 
