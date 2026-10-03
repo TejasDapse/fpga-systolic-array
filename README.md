@@ -7,7 +7,7 @@ co-simulation, a UVM testbench, and HW/SW performance correlation.
 
 ---
 
-## Project status — honest summary (updated 2026-10-03)
+## Project status
 
 > **Everything so far runs in simulation only. Nothing has been compiled for or run on the FPGA board yet.**
 
