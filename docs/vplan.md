@@ -45,6 +45,8 @@
 | F14 | Reads during compute don't disturb it | results after | start_while_busy | `scenario.c_read_while_busy`, `perf_read_while_busy` |
 | F15 | Bus protocol: rvalid exactly 1 cycle after a read, ready low ≤ 1 cycle, master holds request | SVA | all | `c_ready_low`, `c_back_to_back_rd` (cover property) |
 | F16 | FSM: legal states, CLEAR→COMPUTE, DRAIN = 2N−1 cycles, DONE→IDLE, done/busy consistent | SVA | all | — |
+| F17 | No X/Z on control, bus or board outputs after reset (RAMs have no reset) | 4-state Icarus checks | cocotb `no_x_after_reset`, system test | — |
+| F18 | Parameterisation: N ∈ {4, 8, 16}, K_MAX ∈ {16, 64, 128}; illegal values rejected | all of the above per config | cocotb, co-sim, UVM | per-config coverage |
 
 ## 3. Stimulus
 
@@ -54,9 +56,10 @@ values with inline `randomize() with {...}` and switch the matching `dist` off w
 
 ## 4. Closure criteria
 
-- All directed tests pass for N = 4 and N = 8.
+- All directed tests pass for (N, K_MAX) = (4, 64), (8, 64), (16, 64), (8, 128).
 - Constrained-random: ≥ 10 seeds each of `mm_random_test` (200 jobs) and `mm_all_test`, all passing.
-- Merged functional coverage **≥ 95 %** per N (all 55 bins targeted).
+- Merged functional coverage **≥ 95 %** per configuration (all 55 bins targeted). Achieved: 100 %.
+- RTL code coverage (line / branch / toggle) **100 % after documented waivers** (`uvm/code_coverage.py`).
 - Zero assertion failures; mutation checks (below) must fail.
 
 ## 5. Mutation checks (does the environment catch real bugs?)

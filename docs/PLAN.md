@@ -194,7 +194,7 @@ Systolic_Array/
 | 23 | `host.py` on hardware for N=4; SignalTap if needed. | 100 random HW tests pass |
 | 24 | Scale to **N=8**; re-verify sim + HW. | 1,000 HW tests pass |
 | 25 | Benchmarks: cycles vs K, utilization, GOPS, UART vs compute time; plots. | Results table + 2 plots |
-| 26 | Stretch: host tiling / double buffering / PLL for higher Fmax. | Stretch works |
+| 26 | Stretch: host tiling / double buffering / PLL for higher Fmax. ✅ host tiling done (`host.py --tile`, tested with the software board) | Stretch works |
 | 27 | README: overview, diagrams, how to run, results. | README complete |
 | 28 | Mock interview on Phases 1–4. | 2-min and 10-min pitch ready |
 

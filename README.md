@@ -14,35 +14,46 @@ co-simulation, a UVM testbench, and HW/SW performance correlation.
 ### ✅ Done (simulation)
 - **RTL** for the whole design: processing element, N×N array, skew buffers, block-RAM buffers,
   controller FSM, register bus + performance counters, UART-to-bus bridge, board top level.
-- **cocotb tests** (Icarus 13): 19 pass, plus 1 slow N = 8 system test (`SLOW=1`).
+  Verified for **(N, K_MAX) = (4, 64), (8, 64), (16, 64), (4, 16), (8, 128)**; illegal parameters stop simulation.
+- **cocotb tests** (Icarus 13, 4-state): 37 pass, plus 1 slow N = 8 system test (`SLOW=1`); includes
+  **X-propagation checks** (control/bus/board outputs never X after reset).
 - **Reference models**: NumPy golden model, bit-accurate C++ model, analytical cycle model,
-  SystemC/TLM-2.0 loosely-timed and cycle-approximate models — agree on 2 × 1000 shared vectors.
-- **Co-simulation**: Verilator `--sc` RTL vs SystemC CA model — 2 × 1000 jobs, 0 result mismatches,
-  0 counter mismatches, 0-cycle timing error.
-- **UVM** (on Verilator): 52/52 simulations, 6 914 jobs, 476 k scoreboard checks, 0 assertion failures,
-  100 % of the 55 defined functional-coverage bins (N = 4 and 8).
+  SystemC/TLM-2.0 loosely-timed and cycle-approximate models — agree on 3 × 1000 shared vectors (N = 4, 8, 16).
+- **Co-simulation**: Verilator `--sc` RTL vs SystemC CA model — 5 configurations × 1000 jobs, 0 result
+  mismatches, 0 counter mismatches, 0-cycle timing error.
+- **UVM** (on Verilator): 104/104 simulations over 4 configurations, 13 828 jobs, 1.89 M scoreboard checks,
+  0 assertion failures, 100 % of the 55 functional-coverage bins in every configuration.
+- **RTL code coverage** (Verilator): line 96.9 %, branch 100 %, toggle 90.7 % raw — **100 % after 2 documented
+  waivers** (unreachable FSM default, upper bits of 32-bit counters).
 - **Mutation checks**: 3 deliberately injected RTL bugs, each caught (one only by the performance counters).
-- **Performance correlation**: analytical vs SystemC vs RTL counters vs RTL pins — 0 % error for every K.
+- **Performance correlation**: analytical vs SystemC vs RTL counters vs RTL pins — 0 % error for every K (N = 4, 8, 16).
 - **Host software**: `host.py` and `mm_host.cpp`, tested against a software model of the board (`--fake`, pty).
+- **Stretch goal — host-side tiling**: `host.py --tile M K P` runs any (M×K)·(K×P) on the N×N array
+  (N×N output tiles, K chunks ≤ K_MAX, B tiles reused); tested against NumPy incl. int32 wrap.
+- **CI**: GitHub Actions runs the whole simulation flow on every push (`.github/workflows/sim.yml`,
+  toolchain pinned in `environment.yml`).
 - **Learning material**: concept notes and two slide decks (RTL; models + co-simulation).
 
 ### ⏳ Not done yet (needs the board / Quartus)
 - **Quartus Prime Lite is not installed** on the build machine yet.
-- **No design has been compiled** → no resource usage, Fmax or timing-slack numbers exist yet.
+- **No design has been compiled** → no resource usage, Fmax or timing-slack numbers exist yet
+  (also unknown: whether N = 16 fits — 256 multipliers needed vs 144 18×18 / 288 9×9 on the MAX 10).
 - **Pin assignments are unverified** — written from the DE10-Lite manual, not yet checked against
   Terasic's System Builder.
 - **The board has never been programmed**: Phase 1 warm-up designs and the UART echo test are untested on hardware.
 - **Phase 4 (hardware bring-up, benchmarks on the board)** not started.
 - **FPGA column of the performance correlation** is empty ("pending") until the board runs.
-- Stretch goals not started: host-side tiling for larger matrices, double buffering, 16×16 array, higher clock via PLL.
+- Stretch goals not done: double buffering (no benefit over UART: load ≈ 89 ms vs compute ≈ 1.6 µs),
+  higher clock via PLL (needs Quartus timing).
 
 ### ⚠️ Limitations to be aware of
 - **All performance numbers are from simulation** (e.g. 81 % PE utilisation and 5.1 GOPS for N = 8, K = 64
   assume a 50 MHz clock; real Fmax is unknown until Quartus runs).
 - **UVM runs on Verilator, not a commercial simulator** (Questa/VCS/Xcelium). Because of Verilator 5.052 limits:
   - functional coverage is an explicit-bin collector with covergroup-like structure, **not native SystemVerilog covergroups**;
-  - `dist` constraints are worked around; DPI uses fixed-size arrays (N ≤ 16, K_MAX ≤ 64);
-  - Verilator is **2-state**, so X-propagation is not checked.
+  - `dist` constraints are worked around; DPI uses fixed-size arrays (N·K_MAX ≤ 1024);
+  - Verilator is **2-state**; X-propagation is checked only in the 4-state Icarus/cocotb tests.
+- No gate-level (post-synthesis) simulation — needs a Quartus netlist.
 - The SystemC cycle-approximate model does not model the datapath pipeline or RAM timing; `PERF_IDLE`
   (depends on host polling) is excluded from comparisons.
 
@@ -97,17 +108,18 @@ tools/        gen_quartus.py (Quartus files + pin table), setup_ubuntu.sh, build
 
 ## Quick start (Ubuntu 22.04)
 ```bash
-# simulation
-sudo apt install iverilog
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cd tb && pytest -v
+# toolchain (no sudo): Icarus, Verilator, SystemC, z3 + Python packages
+conda env create -f environment.yml && conda activate fpga
+git clone --depth 1 https://github.com/accellera-official/uvm-core ~/tools/uvm-core   # for UVM
 
-# verification flow (simulation only; tools in the `fpga` conda env, see docs/UBUNTU_HANDOFF.md)
+# simulation + verification flow (what CI runs)
+(cd tb && pytest -q)           # cocotb (SLOW=1 adds the N=8 system sim)
 python3 model/vectors.py && make -C model/cpp test && make -C model/systemc test
-make -C cosim                  # Verilator RTL vs SystemC cycle-approximate model
-python3 uvm/regress.py         # UVM regression + merged coverage
+make -C cosim                  # Verilator RTL vs SystemC cycle-approximate model, 5 configurations
+python3 uvm/regress.py         # UVM regression + merged functional coverage
+python3 uvm/code_coverage.py   # RTL line / branch / toggle coverage
 python3 tools/correlate.py     # analytical vs SystemC vs RTL (vs FPGA once measured)
+python3 host/host.py --fake --tile 64 200 48   # tiled multiply on the software board
 
 # hardware (NOT done yet — needs Quartus Prime Lite in PATH and the board)
 tools/build.sh 04_uart_echo --program       # Phase 1 designs

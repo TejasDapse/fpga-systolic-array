@@ -66,7 +66,7 @@ Ubuntu 22.04 ships Icarus 11 (the Mac used 13); if a test fails to *compile*, re
 error in §6 and push.
 
 **No sudo?** The simulators can come from conda-forge instead (this is how the current
-machine is set up):
+machine is set up, and what CI uses): `conda env create -f environment.yml`, or by hand:
 ```bash
 CONDA_NO_PLUGINS=true CONDA_SOLVER=classic conda create -y -n fpga -c conda-forge \
     --override-channels python=3.12 iverilog verilator     # Verilator 5.x, Icarus 13

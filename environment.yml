@@ -1,0 +1,15 @@
+# Simulation / verification toolchain (no sudo needed). Same versions as the dev machine.
+#   conda env create -f environment.yml        (or: micromamba create -f environment.yml)
+# Native C++ is compiled with the system g++ (see docs/UBUNTU_HANDOFF.md).
+name: fpga
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - iverilog=13
+  - verilator=5.052
+  - systemc=3.0.2
+  - z3prover
+  - pip
+  - pip:
+      - -r requirements.txt
