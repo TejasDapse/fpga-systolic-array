@@ -65,6 +65,17 @@ module mm_regs #(
     localparam int KW = $clog2(K_MAX);
     localparam int KL = $clog2(K_MAX + 1);
 
+    // Parameter limits of this register map (simulation-time check only).
+    // synthesis translate_off
+    initial begin
+        if (N < 2 || (1 << LW) != N || (1 << KW) != K_MAX)
+            $fatal(1, "mm_regs: N (%0d) and K_MAX (%0d) must be powers of 2, N >= 2", N, K_MAX);
+        if (N * K_MAX > 4096 || 4 * N * N > 4096 || K_MAX > 255)
+            $fatal(1, "mm_regs: N=%0d K_MAX=%0d overflow the 4 KB buffer windows / 8-bit INFO field",
+                   N, K_MAX);
+    end
+    // synthesis translate_on
+
     // ---------------- address decode ----------------
     wire        accept  = bus_valid && bus_ready;
     wire        do_wr   = accept &&  bus_write;
@@ -75,10 +86,10 @@ module mm_regs #(
     wire [5:0]  reg_sel = offset[7:2];          // word index within the register page
 
     // A: offset = i*K_MAX + k        B: offset = k*N + j
-    wire [11:0] a_row = offset >> KW;
-    wire [11:0] b_row = offset >> LW;
-    wire        a_hit = (region == 4'h1) && (a_row < 12'(N));
-    wire        b_hit = (region == 4'h2) && (b_row < 12'(K_MAX));
+    wire [11-KW:0] a_row = offset[11:KW];            // only the bits a shift can produce
+    wire [11-LW:0] b_row = offset[11:LW];
+    wire           a_hit = (region == 4'h1) && (32'(a_row) < N);
+    wire           b_hit = (region == 4'h2) && (32'(b_row) < K_MAX);
 
     assign wr_en   = do_wr && !busy && (a_hit || b_hit);
     assign wr_sel  = (region == 4'h2);

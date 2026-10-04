@@ -48,6 +48,8 @@ class mm_scoreboard extends uvm_subscriber #(bus_item);
         if (!uvm_config_db #(mm_cfg)::get(this, "", "cfg", cfg))
             `uvm_fatal("CFG", "no mm_cfg in config_db")
         n = cfg.n;  k_max = cfg.k_max;
+        if (n * k_max > MM_MAX_AB || n * n > MM_MAX_C)
+            `uvm_fatal("CFG", $sformatf("N=%0d K_MAX=%0d exceeds the DPI array sizes", n, k_max))
         kw = $clog2(k_max);  lw = $clog2(n);
         a_mem = new[n * k_max];  a_wr = new[n * k_max];
         b_mem = new[k_max * n];  b_wr = new[k_max * n];

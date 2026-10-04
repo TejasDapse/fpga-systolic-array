@@ -41,6 +41,25 @@ K values compared: 64 (all jobs of the co-sim vector file); worst |error| on PER
 
 ![cycles vs K, N=8](correlation_n8.png)
 
+## N = 16
+
+| K | analytical | SystemC CA | RTL counter | RTL pins | FPGA | max error |
+|---|---|---|---|---|---|---|
+| 1 | 33 | 33 | 33 | 33 | pending | 0.0 % |
+| 2 | 34 | 34 | 34 | 34 | pending | 0.0 % |
+| 3 | 35 | 35 | 35 | 35 | pending | 0.0 % |
+| 16 | 48 | 48 | 48 | 48 | pending | 0.0 % |
+| 30 | 62 | 62 | 62 | 62 | pending | 0.0 % |
+| 31 | 63 | 63 | 63 | 63 | pending | 0.0 % |
+| 32 | 64 | 64 | 64 | 64 | pending | 0.0 % |
+| 48 | 80 | 80 | 80 | 80 | pending | 0.0 % |
+| 63 | 95 | 95 | 95 | 95 | pending | 0.0 % |
+| 64 | 96 | 96 | 96 | 96 | pending | 0.0 % |
+
+K values compared: 64 (all jobs of the co-sim vector file); worst |error| on PERF_TOTAL: **0.0 %**; counter mismatches (total/compute/filldrain/macs): **0**; FPGA jobs: none yet (needs the board).
+
+![cycles vs K, N=16](correlation_n16.png)
+
 ## Reading the numbers
 
 - *analytical* = `mm::predict_perf` (K + 2N); the SystemC CA model and the RTL match it exactly because the model reproduces the controller FSM and counter conditions.

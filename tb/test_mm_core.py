@@ -15,7 +15,7 @@ from model.golden_model import edge_cases, expected_perf, matmul_int32, random_i
 from model import regmap as rm
 from model.vectors import make_jobs, read_vectors, write_vectors
 
-K_MAX = 64
+K_MAX = 64                       # overwritten in setup() from the DUT's parameters
 N_RANDOM = int(os.environ.get("MM_RANDOM", "200"))    # random jobs per N
 N_VECTORS = int(os.environ.get("MM_VECTORS", "100"))  # shared-vector jobs per N
 VECTOR_DIR = Path(__file__).resolve().parent.parent / "model" / "vectors"
@@ -47,10 +47,11 @@ class Bus:
     async def write(self, addr, data):
         await self._request(True, addr, data)
 
-    async def read(self, addr):
+    async def read(self, addr, raw=False):
+        """raw=True returns the 4-state value (may hold X) instead of an int."""
         await self._request(False, addr)
         assert int(self.dut.bus_rvalid.value), "rvalid must follow a read by 1 cycle"
-        return int(self.dut.bus_rdata.value)
+        return self.dut.bus_rdata.value if raw else int(self.dut.bus_rdata.value)
 
 
 async def load(bus, n, a, b):
@@ -95,7 +96,56 @@ async def setup(dut):
     await ClockCycles(dut.clk, 3)
     dut.rst_n.value = 1
     await FallingEdge(dut.clk)
-    return bus, 2 ** len(dut.u_regs.wr_lane)            # N is a power of 2
+    global K_MAX
+    K_MAX = 2 ** len(dut.u_regs.wr_addr)                 # K_MAX and N are powers of 2
+    return bus, 2 ** len(dut.u_regs.wr_lane)
+
+
+def resolvable(sig):
+    """True when a signal has no X/Z bits (works with cocotb 1.9 and 2.x)."""
+    v = sig.value
+    return v.is_resolvable if hasattr(v, "is_resolvable") else "x" not in str(v).lower() and "z" not in str(v).lower()
+
+
+@cocotb.test()
+async def no_x_after_reset(dut):
+    """X-propagation (Icarus is 4-state; Verilator is not). Must run first:
+    all cocotb tests share one simulation, and later tests write the RAMs.
+
+    After reset, the control/bus outputs must never be X/Z, every cycle --
+    even while a job runs on never-written RAM (the RAMs have no reset, so
+    that job's C is X by design and is only checked to *be* X). Once A/B are
+    loaded, every C word must be fully defined.
+    """
+    bus, n = await setup(dut)
+    watched = [dut.bus_ready, dut.bus_rvalid, dut.busy, dut.done, dut.state, dut.perf_compute]
+    bad = []
+
+    async def watch():
+        while True:
+            await FallingEdge(dut.clk)
+            bad.extend(s._name for s in watched if not resolvable(s))
+
+    cocotb.start_soon(watch())
+    for addr in [rm.STATUS, rm.CFG_K, rm.INFO, *rm.PERF.values()]:
+        await bus.read(addr, raw=True)
+        assert resolvable(dut.bus_rdata), f"register {addr:#06x} reads X after reset"
+    await bus.read(rm.c_addr(0, 0, n), raw=True)
+    assert resolvable(dut.bus_rdata), "C must be defined (zero) after reset"
+
+    await bus.write(rm.CTRL, rm.CTRL_START)              # job on uninitialised RAM
+    for _ in range(K_MAX + 4 * n + 10):
+        await bus.read(rm.STATUS, raw=True)
+        assert resolvable(dut.bus_rdata), "STATUS must never read X"
+    await bus.read(rm.c_addr(0, 0, n), raw=True)
+    assert not resolvable(dut.bus_rdata), "C of a job on never-written RAM should be X (4-state check alive)"
+
+    rng = np.random.default_rng(11)
+    a, b = random_int8((n, K_MAX), rng), random_int8((K_MAX, n), rng)
+    await load(bus, n, a, b)
+    c, perf = await run_job(bus, n)
+    check("after_load", n, a, b, c, perf)               # to_signed() would fail on X
+    assert not bad, f"X/Z on control outputs: {sorted(set(bad))}"
 
 
 @cocotb.test()
@@ -177,9 +227,8 @@ async def shared_vectors(dut):
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         write_vectors(path, make_jobs(n, 1000, seed=2026 + n))
-    for idx, job in enumerate(read_vectors(path)):
-        if idx == N_VECTORS:
-            break
+    jobs = [j for j in read_vectors(path) if j["k"] <= K_MAX][:N_VECTORS]
+    for idx, job in enumerate(jobs):
         await load(bus, n, job["a"], job["b"])
         c, perf = await run_job(bus, n)
         assert np.array_equal(c, job["c"]), f"vector {idx}: C mismatch"
@@ -187,9 +236,18 @@ async def shared_vectors(dut):
             assert perf[key] == value, f"vector {idx}: {key} = {perf[key]}, expected {value}"
 
 
-@pytest.mark.parametrize("n", [4, 8])
-def test_mm_core(n):
+# (N, K_MAX, random jobs): the main sizes get the full random run; the extra
+# parameter sets (largest array, small and large K_MAX) a shorter one.
+CONFIGS = [(4, 64, None), (8, 64, None), (16, 64, 20), (4, 16, 50), (8, 128, 30)]
+
+
+@pytest.mark.parametrize("n,k_max,n_random", CONFIGS, ids=[f"n{n}_k{k}" for n, k, _ in CONFIGS])
+def test_mm_core(n, k_max, n_random, monkeypatch):
+    if n_random is not None:
+        monkeypatch.setenv("MM_RANDOM", str(n_random))
+        monkeypatch.setenv("MM_VECTORS", "20")
     run_sim("mm_core",
             [CORE / f for f in ["pe.sv", "systolic_array.sv", "skew_buffer.sv", "sram_sp.sv",
                                 "mm_controller.sv", "mm_regs.sv", "mm_core.sv"]],
-            "test_mm_core", parameters={"N": n, "K_MAX": K_MAX}, build_name=f"mm_core_n{n}")
+            "test_mm_core", parameters={"N": n, "K_MAX": k_max},
+            build_name=f"mm_core_n{n}_k{k_max}")

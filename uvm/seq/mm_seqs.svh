@@ -215,6 +215,11 @@ class mm_reg_access_seq extends mm_base_seq;
         wr(`MM_A_BUF + cfg.n * cfg.k_max, 8'h11);       // row N: out of range
         wr(`MM_B_BUF + cfg.k_max * cfg.n, 8'h22);       // row K_MAX: out of range
         wr(16'h4000, 32'h1234_5678);                    // unmapped region
+        // top of the 4 KB windows (address bits 10/11; all out of range)
+        wr(16'h1FFF, 8'h33);  wr(16'h1C00, 8'h33);  wr(16'h1400, 8'h33);
+        wr(16'h2FFF, 8'h44);  wr(16'h2C00, 8'h44);  wr(16'h2800, 8'h44);
+        rd(16'h3FFC, d);  rd(16'h3C00, d);
+        rd(16'h0C08, d);                                // register page alias of CFG_K
         rd(`MM_PERF_IDLE, d);
         rd(`MM_PERF_IDLE, d);
     endtask

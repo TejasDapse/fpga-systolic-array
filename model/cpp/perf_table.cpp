@@ -7,7 +7,7 @@
 int main() {
     const double clk_hz = 50e6;
     std::puts("N,K,total,compute,filldrain,macs,utilization,gops_at_50MHz");
-    for (int n : {4, 8}) {
+    for (int n : {4, 8, 16}) {
         for (int k = 1; k <= 64; ++k) {
             mm::Perf p = mm::predict_perf(n, k);
             double util = double(p.macs) / double(n * n * p.compute);

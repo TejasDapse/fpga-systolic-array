@@ -1,7 +1,7 @@
 # C++ reference model (Phase 5).   make test   |   make perf_table
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
-VECTORS  := ../vectors/n4.hex ../vectors/n8.hex
+VECTORS  := ../vectors/n4.hex ../vectors/n8.hex ../vectors/n16.hex
 
 all: test_mm_ref perf_table
 

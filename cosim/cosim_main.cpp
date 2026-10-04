@@ -130,10 +130,13 @@ SC_MODULE(Cosim) {
 
 int sc_main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
-    if (argc < 4) { std::puts("usage: cosim <N> <vectors.hex> <out.csv>"); return 2; }
+    if (argc < 4) { std::puts("usage: cosim <N> <vectors.hex> <out.csv> [K_MAX=64]"); return 2; }
     const int n = std::atoi(argv[1]);
-    std::vector<mm::Job> jobs = mm::read_vectors(argv[2]);
-    Cosim top("top", n, 64, std::move(jobs), argv[3]);
+    const int k_max = argc > 4 ? std::atoi(argv[4]) : 64;
+    std::vector<mm::Job> jobs;
+    for (mm::Job& j : mm::read_vectors(argv[2]))          // vectors are made for K_MAX = 64
+        if (j.k <= k_max) jobs.push_back(std::move(j));
+    Cosim top("top", n, k_max, std::move(jobs), argv[3]);
     sc_start();
     const bool ok = top.func_mismatch == 0 && top.perf_mismatch == 0 && top.max_cycle_err == 0;
     std::puts(ok ? "PASS" : "FAIL");

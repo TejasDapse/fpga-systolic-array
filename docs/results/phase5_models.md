@@ -45,13 +45,13 @@ Utilisation = MACS / (N² · COMPUTE). Full table for N ∈ {4, 8}, K = 1…64: 
 
 | Check | Vectors | Result |
 |---|---|---|
-| C++ model == NumPy (C and counters) — `make -C model/cpp test` | 2 × 1000 | ✅ 2000/2000 |
-| SystemC LT: C + counters — `make -C model/systemc test` | 2 × 1000 | ✅ 0 mismatches |
-| SystemC CA: C + counters; measured START→DONE vs analytical | 2 × 1000 | ✅ 0 mismatches, max error **0 cycles** (target ±2) |
-| **Co-sim RTL vs CA** (Verilator `--sc`) — `make -C cosim` | 2 × 1000 | ✅ 0 C mismatches, 0 counter mismatches, pin-level START→DONE error **0 cycles** |
+| C++ model == NumPy (C and counters) — `make -C model/cpp test` | 3 × 1000 (N = 4, 8, 16) | ✅ 3000/3000 |
+| SystemC LT: C + counters — `make -C model/systemc test` | 3 × 1000 | ✅ 0 mismatches |
+| SystemC CA: C + counters; measured START→DONE vs analytical | 3 × 1000 | ✅ 0 mismatches, max error **0 cycles** (target ±2) |
+| **Co-sim RTL vs CA** (Verilator `--sc`) — `make -C cosim` | 5 configs × 1000: (N, K_MAX) = (4,64), (8,64), (16,64), (4,16), (8,128) | ✅ 0 C mismatches, 0 counter mismatches, pin-level START→DONE error **0 cycles** |
 | cocotb RTL on the shared vectors | 2 × 100 | ✅ |
 
-Per-job co-sim rows: [cosim_n4.csv](cosim_n4.csv), [cosim_n8.csv](cosim_n8.csv).
+Per-job co-sim rows: [cosim_n4.csv](cosim_n4.csv), [cosim_n8.csv](cosim_n8.csv), [cosim_n16.csv](cosim_n16.csv), [cosim_n4_k16.csv](cosim_n4_k16.csv), [cosim_n8_k128.csv](cosim_n8_k128.csv).
 
 **Harness sanity check (mutation test):** changing the RTL "all PEs active" bound from 2N−1 to
 2N−2 in `mm_controller.sv` made the co-sim report PERF_FILLDRAIN mismatches immediately

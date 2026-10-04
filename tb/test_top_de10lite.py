@@ -71,9 +71,16 @@ class Host:
         return c, perf
 
 
+def no_x(dut):
+    """Board outputs must be fully defined after reset (Icarus is 4-state)."""
+    sigs = [dut.LEDR, dut.UART_TXD] + [getattr(dut, f"HEX{i}") for i in range(6)]
+    return [s._name for s in sigs if any(ch in str(s.value).lower() for ch in "xz")]
+
+
 @cocotb.test()
 async def protocol_and_matmul(dut):
     await board_reset(dut)
+    assert not no_x(dut), f"X/Z on board outputs after reset: {no_x(dut)}"
     n = 2 ** len(dut.u_core.u_regs.wr_lane)
     host = Host(dut)
 
@@ -96,6 +103,7 @@ async def protocol_and_matmul(dut):
             assert perf[key] == value, f"{name}: {key} = {perf[key]}, expected {value}"
         assert read_displays(dut) == perf["PERF_COMPUTE"], "HEX shows PERF_COMPUTE"
 
+    assert not no_x(dut), f"X/Z on board outputs: {no_x(dut)}"
     led = int(dut.LEDR.value)
     assert led >> 8 & 1, "LEDR[8]: a multiply has completed"
     assert led >> 5 & 1 == 0, "no UART framing errors expected"

@@ -10,8 +10,9 @@ Text format, one job per 5 lines, all numbers hex, whitespace separated:
     p <PERF_TOTAL> <PERF_COMPUTE> <PERF_FILLDRAIN> <PERF_MACS>   (expected counters)
 
 Usage:
-    python3 model/vectors.py                    # writes model/vectors/{n4,n8}.hex
+    python3 model/vectors.py                    # writes model/vectors/{n4,n8,n16}.hex
     python3 model/vectors.py --n 8 --count 1000 --seed 5 --out /tmp/v.hex
+    python3 model/vectors.py --n 8 --k-max 128  # writes model/vectors/n8_k128.hex
 """
 import argparse
 import sys
@@ -70,15 +71,17 @@ def read_vectors(path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--n", type=int, default=None, help="one N (default: 4 and 8)")
+    ap.add_argument("--n", type=int, default=None, help="one N (default: 4, 8 and 16)")
     ap.add_argument("--count", type=int, default=1000)
     ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--k-max", type=int, default=64, help="largest K (default 64)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
-    for n in ([args.n] if args.n else [4, 8]):
-        out = args.out or ROOT / "model" / "vectors" / f"n{n}.hex"
+    for n in ([args.n] if args.n else [4, 8, 16]):
+        suffix = "" if args.k_max == 64 else f"_k{args.k_max}"
+        out = args.out or ROOT / "model" / "vectors" / f"n{n}{suffix}.hex"
         out.parent.mkdir(parents=True, exist_ok=True)
-        write_vectors(out, make_jobs(n, args.count, seed=args.seed + n))
+        write_vectors(out, make_jobs(n, args.count, k_max=args.k_max, seed=args.seed + n))
         print(f"wrote {args.count} jobs to {out}")
 
 

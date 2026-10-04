@@ -1,11 +1,12 @@
 # SystemC LT + CA models (Phase 5).   make test
 # SystemC 3.0 comes from the conda env (conda install -c conda-forge systemc).
-SYSTEMC_HOME ?= $(HOME)/miniconda3/envs/fpga
+FPGA_ENV     ?= $(HOME)/miniconda3/envs/fpga
+SYSTEMC_HOME ?= $(FPGA_ENV)
 CXX          := /usr/bin/g++
 CXXFLAGS     := -std=c++17 -O2 -Wall -Wno-unused-parameter -I$(SYSTEMC_HOME)/include
 LDFLAGS      := -L$(SYSTEMC_HOME)/lib -lsystemc -Wl,-rpath,$(SYSTEMC_HOME)/lib
 BUILD        := build
-VECTORS      := ../vectors/n4.hex ../vectors/n8.hex
+VECTORS      := ../vectors/n4.hex ../vectors/n8.hex ../vectors/n16.hex
 HDRS         := $(wildcard *.h) ../cpp/mm_ref.h
 
 $(BUILD)/test_models: test_models.cpp ../cpp/mm_ref.cpp $(HDRS)
