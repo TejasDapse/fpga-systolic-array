@@ -34,3 +34,4 @@ host/mm_host
 .DS_Store
 formal/build/
 formal/mm_core_*/
+formal/mm_core/
