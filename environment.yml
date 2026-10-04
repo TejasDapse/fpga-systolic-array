@@ -1,6 +1,7 @@
 # Simulation / verification toolchain (no sudo needed). Same versions as the dev machine.
 #   conda env create -f environment.yml        (or: micromamba create -f environment.yml)
 # Native C++ is compiled with the system g++ (see docs/UBUNTU_HANDOFF.md).
+# Not on conda-forge (see docs/TOOLS.md): Accellera uvm-core, SymbiYosys, sv2v -> ~/tools.
 name: fpga
 channels:
   - conda-forge
@@ -10,6 +11,10 @@ dependencies:
   - verilator=5.052
   - systemc=3.0.2
   - z3prover
+  - yosys=0.69          # synthesis estimate + formal front-end
+  - verible             # style lint
+  - gtkwave             # waveform viewer
   - pip
   - pip:
       - -r requirements.txt
+      - click             # needed by SymbiYosys

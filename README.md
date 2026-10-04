@@ -25,7 +25,11 @@ co-simulation, a UVM testbench, and HW/SW performance correlation.
   0 assertion failures, 100 % of the 55 functional-coverage bins in every configuration.
 - **RTL code coverage** (Verilator): line 96.9 %, branch 100 %, toggle 90.7 % raw — **100 % after 2 documented
   waivers** (unreachable FSM default, upper bits of 32-bit counters).
-- **Mutation checks**: 3 deliberately injected RTL bugs, each caught (one only by the performance counters).
+- **Formal verification** (SymbiYosys): bus-protocol and FSM properties **proven by k-induction** for any bus
+  master; cover points reached; a mutation is caught with a counterexample.
+- **Lint + pre-Quartus estimate**: Verilator `-Wall` clean; Verible style lint; Yosys estimate of
+  N² multipliers / 2N RAMs (N = 16 needs 256 of the 288 9-bit multipliers).
+- **Mutation checks**: deliberately injected RTL bugs, each caught (one only by the performance counters).
 - **Performance correlation**: analytical vs SystemC vs RTL counters vs RTL pins — 0 % error for every K (N = 4, 8, 16).
 - **Host software**: `host.py` and `mm_host.cpp`, tested against a software model of the board (`--fake`, pty).
 - **Stretch goal — host-side tiling**: `host.py --tile M K P` runs any (M×K)·(K×P) on the N×N array
@@ -57,6 +61,7 @@ co-simulation, a UVM testbench, and HW/SW performance correlation.
 - The SystemC cycle-approximate model does not model the datapath pipeline or RAM timing; `PERF_IDLE`
   (depends on host polling) is excluded from comparisons.
 
+Tools (installed / needs login / licensed-only): [docs/TOOLS.md](docs/TOOLS.md) ·
 Details: [docs/results/verification_report.md](docs/results/verification_report.md) ·
 plan and tracker: [docs/PLAN.md](docs/PLAN.md) · hardware to-do list: [docs/UBUNTU_HANDOFF.md](docs/UBUNTU_HANDOFF.md).
 
@@ -100,10 +105,11 @@ model/        golden_model.py, regmap.py, vectors.py (shared test vectors)
   cpp/        bit-accurate C++ model + analytical perf model
   systemc/    TLM-2.0 loosely-timed + cycle-approximate models
 cosim/        Verilator (--sc) RTL vs SystemC co-simulation
-uvm/          UVM env (agent, DPI-C scoreboard, coverage, SVA) on Verilator; regress.py
+uvm/          UVM env (agent, DPI-C scoreboard, coverage, SVA) on Verilator; regress.py, code_coverage.py
+formal/       SymbiYosys formal proof of bus + FSM properties
 tb/           cocotb testbenches (pytest; SLOW=1 adds the N=8 full-system sim)
 host/         host.py (tests + benchmarks, --fake = no board), mm_host.cpp, fake_serial.py, uart_echo_test.py
-tools/        gen_quartus.py (Quartus files + pin table), setup_ubuntu.sh, build.sh, correlate.py
+tools/        gen_quartus.py, setup_ubuntu.sh, build.sh, correlate.py, lint.sh, synth_estimate.sh
 ```
 
 ## Quick start (Ubuntu 22.04)
@@ -111,6 +117,7 @@ tools/        gen_quartus.py (Quartus files + pin table), setup_ubuntu.sh, build
 # toolchain (no sudo): Icarus, Verilator, SystemC, z3 + Python packages
 conda env create -f environment.yml && conda activate fpga
 git clone --depth 1 https://github.com/accellera-official/uvm-core ~/tools/uvm-core   # for UVM
+# formal: SymbiYosys + sv2v -> ~/tools (commands in docs/TOOLS.md / docs/UBUNTU_HANDOFF.md)
 
 # simulation + verification flow (what CI runs)
 (cd tb && pytest -q)           # cocotb (SLOW=1 adds the N=8 system sim)
@@ -119,6 +126,8 @@ make -C cosim                  # Verilator RTL vs SystemC cycle-approximate mode
 python3 uvm/regress.py         # UVM regression + merged functional coverage
 python3 uvm/code_coverage.py   # RTL line / branch / toggle coverage
 python3 tools/correlate.py     # analytical vs SystemC vs RTL (vs FPGA once measured)
+make -C formal                 # formal proof (SymbiYosys)
+tools/lint.sh && tools/synth_estimate.sh       # lint + pre-Quartus resource estimate
 python3 host/host.py --fake --tile 64 200 48   # tiled multiply on the software board
 
 # hardware (NOT done yet — needs Quartus Prime Lite in PATH and the board)

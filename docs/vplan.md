@@ -43,8 +43,8 @@
 | F12 | Hard reset (rst_n) mid-job | reset values + next job | hard_reset | `scenario.hard_reset_while_busy` |
 | F13 | Register map: INFO, holes, aliasing, write-only buffers, out-of-range A/B/C | read = 0 / ignored | reg_access | `scenario.*_out_of_range` |
 | F14 | Reads during compute don't disturb it | results after | start_while_busy | `scenario.c_read_while_busy`, `perf_read_while_busy` |
-| F15 | Bus protocol: rvalid exactly 1 cycle after a read, ready low ≤ 1 cycle, master holds request | SVA | all | `c_ready_low`, `c_back_to_back_rd` (cover property) |
-| F16 | FSM: legal states, CLEAR→COMPUTE, DRAIN = 2N−1 cycles, DONE→IDLE, done/busy consistent | SVA | all | — |
+| F15 | Bus protocol: rvalid exactly 1 cycle after a read, ready low ≤ 1 cycle, master holds request | SVA + **formal proof** (`formal/`, slave side) | all | `c_ready_low`, `c_back_to_back_rd` (cover property) |
+| F16 | FSM: legal states, CLEAR→COMPUTE, DRAIN = 2N−1 cycles, DONE→IDLE, done/busy consistent | SVA + **formal proof** (except DRAIN length) | all | — |
 | F17 | No X/Z on control, bus or board outputs after reset (RAMs have no reset) | 4-state Icarus checks | cocotb `no_x_after_reset`, system test | — |
 | F18 | Parameterisation: N ∈ {4, 8, 16}, K_MAX ∈ {16, 64, 128}; illegal values rejected | all of the above per config | cocotb, co-sim, UVM | per-config coverage |
 

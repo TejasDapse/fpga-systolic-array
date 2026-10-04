@@ -210,6 +210,13 @@ These are planned, not yet implemented — listed so the Ubuntu side knows what'
       --override-channels systemc=3.0.2 z3prover        # z3 = constraint solver for randomize()
   git clone --depth 1 https://github.com/accellera-official/uvm-core ~/tools/uvm-core
   ```
+  Formal + lint extras (also no sudo): `yosys verible gtkwave` come with environment.yml; then
+  ```bash
+  git clone --depth 1 https://github.com/YosysHQ/sby ~/tools/sby && make -C ~/tools/sby install PREFIX=$CONDA_PREFIX
+  pip install click
+  curl -sLO https://github.com/zachjs/sv2v/releases/download/v0.0.13/sv2v-Linux.zip   # unzip to ~/tools/sv2v
+  ```
+  Full tool list (installed / needs login / licensed): [TOOLS.md](TOOLS.md).
   Native code is compiled with the system `g++` 11 (the Makefiles set `CXX=/usr/bin/g++`); the conda
   GCC 16 does not match Ubuntu 22.04's glibc headers. UVM runs on **Verilator** (no Questa needed).
 - **Phase 5 (Ubuntu tools, apt route):** Verilator ≥ 5 and SystemC for co-simulation.

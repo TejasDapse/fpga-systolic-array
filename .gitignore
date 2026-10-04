@@ -32,3 +32,5 @@ host/mm_host
 
 # macOS
 .DS_Store
+formal/build/
+formal/mm_core_*/

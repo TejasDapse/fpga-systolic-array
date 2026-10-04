@@ -15,6 +15,8 @@ Plan: [../vplan.md](../vplan.md). All of it re-runs in CI (`.github/workflows/si
 | Co-simulation | Verilator `--sc` vs SystemC CA (`cosim/`) | RTL == model: C, all counters, pin-level cycles | ✅ 5 configs × 1000 jobs, 0-cycle error |
 | UVM | UVM on Verilator + DPI-C + SVA (`uvm/`) | stimulus-independent checking, functional coverage closure | ✅ 104/104 sims, 100 % |
 | Code coverage | Verilator line/branch/toggle (`uvm/code_coverage.py`) | which RTL the UVM tests actually exercise | ✅ 100 % after waivers |
+| Formal | SymbiYosys + z3 (`formal/`) | bus protocol + FSM properties for **any** bus master, unbounded (k-induction) | ✅ proved; covers reached |
+| Lint | Verilator `-Wall`, Verible (`tools/lint.sh`) | coding problems / style | ✅ Verilator clean on core/top; 6 Verible style notes |
 | Host software | `host.py --fake`, `mm_host` on a pty, tiling tests | host drivers + tiling speak the protocol correctly | ✅ |
 
 cocotb total: 37 tests pass (+1 slow, skipped by default).
@@ -104,9 +106,35 @@ Need the board or Quartus:
 3. `host/mm_host --csv docs/results/fpga_perf_n{4,8}.csv`, then `tools/correlate.py` (Days 45–46).
 4. Gate-level simulation of the Quartus netlist (optional).
 
-Need a commercial simulator (optional): native covergroups and the UVM env on Questa (Starter edition ships with Quartus).
+Need a commercial simulator (optional): native covergroups and the UVM env on Questa (Starter edition ships
+with Quartus) or on VCS / Xcelium via EDA Playground — see [../TOOLS.md](../TOOLS.md).
 
-## 9. Reproduce
+## 9. Formal verification ([../../formal/](../../formal/))
+
+`formal/mm_core_props.v` wraps `mm_core` (N = 2, K_MAX = 4) with **unconstrained** bus inputs and
+proves, by k-induction (unbounded, not just to a depth): `rvalid` exactly one cycle after every read
+accept and never otherwise; `ready` low for at most one cycle; legal FSM states; `busy`/`done`
+consistent with the state; `done` is a one-cycle pulse; DONE → IDLE; CLEAR → COMPUTE (or IDLE on soft
+reset); COMPUTE → COMPUTE/DRAIN (or IDLE). Cover statements show DONE and "read while busy" are
+reachable, so the proof is not vacuous. Proof time ≈ 1 min.
+
+Mutation check: making `bus_rvalid` sticky fails `a_rvalid_only_after` in the base case within
+seconds, with a counterexample VCD for GTKWave.
+
+These are the same properties as the simulation SVA (`uvm/tb/mm_sva.sv`), now proven for all inputs
+instead of the inputs the tests happened to drive.
+
+## 10. Pre-Quartus synthesis estimate (`tools/synth_estimate.sh`)
+
+sv2v + Yosys coarse synthesis (no MAX 10 mapping, no timing — Quartus is still required):
+
+| N | 8×8 multipliers | RAMs (M9K candidates) | 10M50 capacity |
+|---|---|---|---|
+| 4 | 16 | 8 | 288 9-bit multipliers, 182 M9K |
+| 8 | 64 | 16 | |
+| 16 | 256 | 32 | fits on multipliers (256 ≤ 288) — logic/Fmax unknown |
+
+## 11. Reproduce
 
 ```bash
 conda env create -f environment.yml && conda activate fpga
@@ -116,5 +144,7 @@ python3 model/vectors.py && make -C model/cpp test && make -C model/systemc test
 make -C cosim                                         # RTL vs SystemC, 5 configurations
 python3 uvm/regress.py                                # UVM regression + functional coverage
 python3 uvm/code_coverage.py                          # RTL code coverage
+make -C formal                                        # formal proof (needs ~/tools/sby, sv2v)
+tools/lint.sh && tools/synth_estimate.sh              # lint + pre-Quartus estimate
 python3 tools/correlate.py
 ```
