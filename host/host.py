@@ -8,6 +8,7 @@ Talks the UART-to-bus bridge protocol (PLAN.md §5) and the register map
     python host/host.py --tests 1000 --k 64   # fixed K instead of random K
     python host/host.py --bench               # sweep K, write CSV + plots to docs/results/
     python host/host.py --fake                # no board: talk to a software model (self-test)
+    python host/host.py --tile 64 64 64       # tiled (M x K) @ (K x P) on the N x N array
 
 Every result is compared with NumPy; the script prints PASS/FAIL and exits 1 on failure.
 """
@@ -74,29 +75,75 @@ class Accelerator:
     def read_block(self, addr, length):
         return self._cmd(b"D" + struct.pack("<HH", addr, length), length)
 
-    # ---- one matrix multiply
-    def matmul(self, a, b):
-        """Returns (C, perf counters dict, host timings dict in seconds)."""
-        n, k = a.shape
-        assert n == self.n and b.shape == (k, n) and 1 <= k <= self.k_max
-        t0 = time.perf_counter()
-        self.write(rm.CFG_K, k)
-        for i in range(n):                                  # A rows are K_MAX apart
+    # ---- one matrix multiply, in steps (tiling reuses loaded operands)
+    def load_a(self, a):
+        """A (N x K) and CFG_K = K. A rows sit K_MAX apart in A_BUF."""
+        self.write(rm.CFG_K, a.shape[1])
+        for i in range(self.n):
             self.write_block(rm.a_addr(i, 0, self.k_max), a[i].astype(np.int8).tobytes())
-        self.write_block(rm.B_BUF, b.astype(np.int8).tobytes())    # B rows are contiguous
-        t1 = time.perf_counter()
+
+    def load_b(self, b):
+        """B (K x N); its rows are contiguous in B_BUF."""
+        self.write_block(rm.B_BUF, b.astype(np.int8).tobytes())
+
+    def run_loaded(self):
+        """START, wait for DONE, return (C, perf counters)."""
         self.write(rm.CTRL, rm.CTRL_START)
         for _ in range(1000):
             if self.read(rm.STATUS) & rm.STATUS_DONE:
                 break
         else:
             raise ProtocolError("DONE never set")
-        t2 = time.perf_counter()
-        raw = self.read_block(rm.C_BUF, 4 * n * n)
-        c = np.frombuffer(raw, dtype="<i4").reshape(n, n).astype(np.int64)
+        raw = self.read_block(rm.C_BUF, 4 * self.n * self.n)
+        c = np.frombuffer(raw, dtype="<i4").reshape(self.n, self.n).astype(np.int64)
         perf = {name: self.read(addr) for name, addr in rm.PERF.items()}
-        t3 = time.perf_counter()
-        return c, perf, {"load": t1 - t0, "go": t2 - t1, "read": t3 - t2}
+        return c, perf
+
+    def matmul(self, a, b):
+        """Returns (C, perf counters dict, host timings dict in seconds)."""
+        n, k = a.shape
+        assert n == self.n and b.shape == (k, n) and 1 <= k <= self.k_max
+        t0 = time.perf_counter()
+        self.load_a(a)
+        self.load_b(b)
+        t1 = time.perf_counter()
+        c, perf = self.run_loaded()
+        t2 = time.perf_counter()
+        return c, perf, {"load": t1 - t0, "go_and_read": t2 - t1}
+
+    def matmul_tiled(self, a, b):
+        """C = A @ B for any shapes (M x K) @ (K x P) on the N x N array.
+
+        C is split into N x N output tiles and K into chunks of <= K_MAX; partial
+        tiles are zero-padded. Each job's int32 partial sums are added on the host
+        modulo 2^32, which equals the hardware's wrap-around on the full sum.
+        Loop order j -> k -> i keeps one B tile loaded while A tiles stream past
+        it (B is only re-sent when it changes). Returns (C, stats dict).
+        """
+        a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+        (m, k), (k2, p) = a.shape, b.shape
+        assert k == k2, "inner dimensions differ"
+        n, kc_max = self.n, self.k_max
+        c = np.zeros((m, p), dtype=np.int64)
+        stats = {"jobs": 0, "b_loads": 0, "cycles": 0, "macs": 0}
+        for j0 in range(0, p, n):
+            for k0 in range(0, k, kc_max):
+                kc = min(kc_max, k - k0)
+                bt = np.zeros((kc, n), dtype=np.int64)
+                bt[:, :min(n, p - j0)] = b[k0:k0 + kc, j0:j0 + n]
+                self.load_b(bt)
+                stats["b_loads"] += 1
+                for i0 in range(0, m, n):
+                    at = np.zeros((n, kc), dtype=np.int64)
+                    at[:min(n, m - i0), :] = a[i0:i0 + n, k0:k0 + kc]
+                    self.load_a(at)
+                    ct, perf = self.run_loaded()
+                    c[i0:i0 + n, j0:j0 + n] += ct[:min(n, m - i0), :min(n, p - j0)]
+                    stats["jobs"] += 1
+                    stats["cycles"] += perf["PERF_TOTAL"]
+                    stats["macs"] += perf["PERF_MACS"]
+        c = (c + 2**31) % 2**32 - 2**31                  # int32 wrap, like the hardware
+        return c, stats
 
 
 class FakeBoard:
@@ -236,7 +283,7 @@ def run_bench(acc, rng, out_dir):
             "gops": 2 * macs / compute_s / 1e9,
             "peak_gops": 2 * n * n * CLK_HZ / 1e9,
             "uart_load_ms": t["load"] * 1e3,
-            "uart_read_ms": t["read"] * 1e3,
+            "uart_go_read_ms": t["go_and_read"] * 1e3,
             "end_to_end_ms": sum(t.values()) * 1e3,
             "numpy_us": t_np * 1e6,
         })
@@ -299,6 +346,19 @@ def _plot(rows, out_dir, n):
     print(f"wrote plots to {out_dir}")
 
 
+def run_tiled(acc, m, k, p, rng):
+    a, b = random_int8((m, k), rng), random_int8((k, p), rng)
+    t0 = time.perf_counter()
+    c, st = acc.matmul_tiled(a, b)
+    secs = time.perf_counter() - t0
+    ok = np.array_equal(c, matmul_int32(a, b))
+    print(f"({m}x{k}) @ ({k}x{p}) on {acc.n}x{acc.n}: {st['jobs']} jobs, {st['b_loads']} B loads, "
+          f"{st['cycles']} array cycles ({st['cycles'] / CLK_HZ * 1e6:.1f} us at 50 MHz), "
+          f"{st['macs']} MACs issued for {m * k * p} useful, {secs:.2f} s on the host link")
+    print("tiled result matches NumPy" if ok else "tiled result MISMATCH")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--port", default=None)
@@ -308,12 +368,15 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--bench", action="store_true", help="benchmark K sweep instead of tests")
     ap.add_argument("--fake", action="store_true", help="use a software model instead of a board")
+    ap.add_argument("--tile", type=int, nargs=3, metavar=("M", "K", "P"),
+                    help="tiled multiply of random (M x K) @ (K x P) matrices")
+    ap.add_argument("--fake-n", type=int, default=8, help="N of the --fake board")
     ap.add_argument("--out", type=Path, default=ROOT / "docs" / "results")
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
 
     if args.fake:
-        link = FakeBoard()
+        link = FakeBoard(n=args.fake_n)
         print("Using FakeBoard (software model, no hardware)")
     else:
         import serial
@@ -328,6 +391,8 @@ def main():
         if args.bench:
             run_bench(acc, rng, args.out)
             ok = True
+        elif args.tile:
+            ok = run_tiled(acc, *args.tile, rng)
         else:
             ok = run_tests(acc, args.tests, args.k, rng)
     except ProtocolError as e:
