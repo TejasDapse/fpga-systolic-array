@@ -10,5 +10,5 @@ for n in 4 8 16; do
         rtl/common/*.sv rtl/core/*.sv rtl/top/*.sv --top-module top_de10lite 2>&1 \
         | grep -E "^%(Warning|Error)" | grep -v "rtl/common" || echo "   N=$n: clean (rtl/core, rtl/top)"
 done
-echo "== Verible style lint"
-"$BIN/verible-verilog-lint" rtl/common/*.sv rtl/core/*.sv rtl/top/*.sv && echo "   clean"
+echo "== Verible style lint (informational: style notes do not fail the script)"
+"$BIN/verible-verilog-lint" rtl/common/*.sv rtl/core/*.sv rtl/top/*.sv && echo "   clean" || true

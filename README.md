@@ -3,7 +3,7 @@
 An N×N output-stationary systolic array (int8 inputs, int32 accumulators) for the
 Terasic **DE10-Lite** (Intel MAX 10), driven from Python over UART, plus a
 pre-silicon verification flow: C++/SystemC reference models, Verilator
-co-simulation, a UVM testbench, and HW/SW performance correlation.
+co-simulation, a UVM testbench, formal verification, and HW/SW performance correlation.
 
 ---
 
@@ -34,14 +34,17 @@ co-simulation, a UVM testbench, and HW/SW performance correlation.
 - **Host software**: `host.py` and `mm_host.cpp`, tested against a software model of the board (`--fake`, pty).
 - **Stretch goal — host-side tiling**: `host.py --tile M K P` runs any (M×K)·(K×P) on the N×N array
   (N×N output tiles, K chunks ≤ K_MAX, B tiles reused); tested against NumPy incl. int32 wrap.
-- **CI**: GitHub Actions runs the whole simulation flow on every push (`.github/workflows/sim.yml`,
-  toolchain pinned in `environment.yml`).
+- **Reproducible toolchain**: everything above installs without sudo from `environment.yml`
+  (+ UVM / SymbiYosys / sv2v sources, see [docs/TOOLS.md](docs/TOOLS.md)).
 - **Learning material**: concept notes and two slide decks (RTL; models + co-simulation).
 
 ### ⏳ Not done yet (needs the board / Quartus)
+- **CI is written but not active**: the GitHub Actions workflow (cocotb, models, co-sim, lint, formal,
+  short UVM regression) is ready locally; pushing it needs a GitHub token with the `workflow` scope
+  (`gh auth refresh -s workflow`).
 - **Quartus Prime Lite is not installed** on the build machine yet.
 - **No design has been compiled** → no resource usage, Fmax or timing-slack numbers exist yet
-  (also unknown: whether N = 16 fits — 256 multipliers needed vs 144 18×18 / 288 9×9 on the MAX 10).
+  (Yosys estimate: N = 16 needs 256 of the 288 9-bit multipliers — logic, RAM and Fmax still unknown).
 - **Pin assignments are unverified** — written from the DE10-Lite manual, not yet checked against
   Terasic's System Builder.
 - **The board has never been programmed**: Phase 1 warm-up designs and the UART echo test are untested on hardware.
@@ -72,28 +75,33 @@ plan and tracker: [docs/PLAN.md](docs/PLAN.md) · hardware to-do list: [docs/UBU
 | Phase | Content | Simulation | Hardware |
 |---|---|---|---|
 | 1. Foundations | Tool flow, 7-seg, UART TX/RX, FIFO | ✅ | ⏳ not run on board |
-| 2. Compute engine | PE, N×N array, skew buffers | ✅ (N = 2, 4, 8) | ⏳ |
-| 3. Integration | BRAM buffers, controller FSM, register bus + perf counters, UART bridge, host | ✅ (N = 4, 8, over UART) | ⏳ |
+| 2. Compute engine | PE, N×N array, skew buffers | ✅ (N = 2, 4, 8, 16) | ⏳ |
+| 3. Integration | BRAM buffers, controller FSM, register bus + perf counters, UART bridge, host | ✅ (N = 4, 8, 16 on the bus; 4, 8 over UART) | ⏳ |
 | 4. Hardware & results | Quartus compile, bring-up, 8×8 on board, benchmarks | — | ⏳ **not started** |
 | 5. Models & co-sim | C++ bit-accurate model, SystemC/TLM-2.0, Verilator co-simulation | ✅ [results](docs/results/phase5_models.md) | n/a |
-| 6. UVM & correlation | UVM env + DPI-C scoreboard, coverage, SVA, HW↔SW correlation | ✅ [regression](docs/results/uvm_regression.md), [correlation](docs/results/correlation.md) | ⏳ FPGA column pending |
+| 6. UVM & correlation | UVM env + DPI-C scoreboard, coverage, SVA, formal, HW↔SW correlation | ✅ [regression](docs/results/uvm_regression.md), [code coverage](docs/results/code_coverage.md), [correlation](docs/results/correlation.md) | ⏳ FPGA column pending |
+| Stretch | host-side tiling for any matrix size | ✅ (`host.py --tile`, software board) | ⏳ |
 
 ## Results at a glance (simulation)
 
 | Check | Result |
 |---|---|
-| cocotb unit + system tests | 19 pass (+1 slow) |
-| C++ model vs NumPy | 2000 / 2000 vectors match |
-| SystemC LT and CA models vs expected | 0 mismatches; CA cycle error 0 |
-| Verilator co-sim, RTL vs SystemC CA | 2 × 1000 jobs: 0 C / 0 counter mismatches, 0-cycle error |
-| UVM regression | 52 / 52 sims, 476 k checks, 100 % of 55 coverage bins, 0 SVA failures |
-| Correlation (analytical / SystemC / RTL) | 0 % error for all K, N = 4 and 8 |
+| cocotb unit + system tests (Icarus, 4-state) | 37 pass (+1 slow), incl. X-propagation |
+| C++ model vs NumPy | 3000 / 3000 vectors match (N = 4, 8, 16) |
+| SystemC LT and CA models vs expected | 3 × 1000 jobs, 0 mismatches; CA cycle error 0 |
+| Verilator co-sim, RTL vs SystemC CA | 5 configs × 1000 jobs: 0 C / 0 counter mismatches, 0-cycle error |
+| UVM regression | 104 / 104 sims, 1.89 M checks, 100 % of 55 coverage bins in all 4 configs, 0 SVA failures |
+| RTL code coverage (line / branch / toggle) | 96.9 / 100 / 90.7 % raw → 100 % after 2 waivers |
+| Formal (SymbiYosys, k-induction) | bus + FSM properties proven for any bus master |
+| Correlation (analytical / SystemC / RTL) | 0 % error for all K, N = 4, 8, 16 |
 | Correlation (FPGA) | **pending — board not run yet** |
+
+Full report: [docs/results/verification_report.md](docs/results/verification_report.md).
 
 ## Layout
 ```
-docs/         PLAN.md (plan + tracker), NOTES.md (concept notes), vplan.md, UBUNTU_HANDOFF.md
-  results/    phase5_models, uvm_regression, correlation, verification_report, CSVs, plots,
+docs/         PLAN.md (plan + tracker), NOTES.md (concept notes), vplan.md, TOOLS.md, UBUNTU_HANDOFF.md
+  results/    verification_report, phase5_models, uvm_regression, code_coverage, correlation, CSVs, plots,
               phase1_hw.md (empty template — hardware not run yet)
   slides/     01_rtl_overview/, 02_models_cosim/ (LaTeX, PDF, PPTX + generators), slide_kit.py
 rtl/common/   shared modules: sync_2ff, tick_gen, hex7seg, uart_tx, uart_rx, fifo_sync
@@ -110,16 +118,17 @@ formal/       SymbiYosys formal proof of bus + FSM properties
 tb/           cocotb testbenches (pytest; SLOW=1 adds the N=8 full-system sim)
 host/         host.py (tests + benchmarks, --fake = no board), mm_host.cpp, fake_serial.py, uart_echo_test.py
 tools/        gen_quartus.py, setup_ubuntu.sh, build.sh, correlate.py, lint.sh, synth_estimate.sh
+environment.yml   pinned conda-forge toolchain (Icarus, Verilator, SystemC, z3, Yosys, Verible, GTKWave)
 ```
 
 ## Quick start (Ubuntu 22.04)
 ```bash
-# toolchain (no sudo): Icarus, Verilator, SystemC, z3 + Python packages
+# toolchain (no sudo): Icarus, Verilator, SystemC, z3, Yosys, Verible, GTKWave + Python packages
 conda env create -f environment.yml && conda activate fpga
 git clone --depth 1 https://github.com/accellera-official/uvm-core ~/tools/uvm-core   # for UVM
 # formal: SymbiYosys + sv2v -> ~/tools (commands in docs/TOOLS.md / docs/UBUNTU_HANDOFF.md)
 
-# simulation + verification flow (what CI runs)
+# simulation + verification flow
 (cd tb && pytest -q)           # cocotb (SLOW=1 adds the N=8 system sim)
 python3 model/vectors.py && make -C model/cpp test && make -C model/systemc test
 make -C cosim                  # Verilator RTL vs SystemC cycle-approximate model, 5 configurations
@@ -139,8 +148,9 @@ Board instructions: [foundations/README.md](foundations/README.md) (Phase 1) and
 [docs/UBUNTU_HANDOFF.md](docs/UBUNTU_HANDOFF.md) §4 (accelerator).
 
 ## Next steps
-1. Install Quartus Prime Lite + MAX 10 support on the Ubuntu machine.
+1. Install Quartus Prime Lite + MAX 10 support (and optionally Questa – Intel FPGA Starter) — see [docs/TOOLS.md](docs/TOOLS.md).
 2. Verify pins against Terasic System Builder; compile all designs; record resources, Fmax, slack.
 3. Program the board: Phase 1 designs, UART echo test, then the accelerator (N = 4, then 8).
 4. Run `host/mm_host --csv docs/results/fpga_perf_n{4,8}.csv` and `tools/correlate.py` to fill the FPGA column.
 5. Update this status section with the real hardware numbers.
+6. Activate CI: `gh auth refresh -s workflow`, then push `.github/workflows/sim.yml`.
