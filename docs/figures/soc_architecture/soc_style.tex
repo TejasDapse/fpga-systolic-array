@@ -1,0 +1,107 @@
+% soc_style.tex -- shared look for the SoC figures (same palette as the slide decks and the
+% core register placement figure). Every figure does \input{soc_style}.
+\usepackage[T1]{fontenc}
+\usepackage[scaled=0.95]{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usetikzlibrary{arrows.meta,calc,positioning,fit,shapes.geometric,shapes.misc}
+
+% ---------------- palette ----------------
+\definecolor{pcb}{HTML}{0B2E33}
+\definecolor{pcbmid}{HTML}{1F5C61}
+\definecolor{tint}{HTML}{E6F0EF}
+\definecolor{copper}{HTML}{B5651D}
+\definecolor{coppert}{HTML}{F6E8DC}
+\definecolor{ink}{HTML}{1F2A2E}
+\definecolor{muted}{HTML}{5B6B70}
+\definecolor{hardf}{HTML}{DCE6F2}
+\definecolor{harde}{HTML}{2F4A7A}
+\definecolor{good}{HTML}{2E7D32}
+\definecolor{bad}{HTML}{B3261E}
+% one colour per kind of block: border (d) / fill (f)
+\definecolor{cpud}{HTML}{2B5C9E} \definecolor{cpuf}{HTML}{D6E4F5}
+\definecolor{gpud}{HTML}{2E7D32} \definecolor{gpuf}{HTML}{D5EDD0}
+\definecolor{npud}{HTML}{0B2E33} \definecolor{npuf}{HTML}{BFE0DB}
+\definecolor{memd}{HTML}{5E3A8C} \definecolor{memf}{HTML}{E4DAF3}
+\definecolor{busd}{HTML}{B5651D} \definecolor{busf}{HTML}{F6E8DC}
+\definecolor{prd}{HTML}{546E7A}  \definecolor{prf}{HTML}{E3EAED}
+\definecolor{secd}{HTML}{B3261E} \definecolor{secf}{HTML}{F7D9D6}
+\definecolor{pwrd}{HTML}{8A6800} \definecolor{pwrf}{HTML}{FFF0B8}
+\definecolor{medd}{HTML}{8E2463} \definecolor{medf}{HTML}{F5D6E6}
+\definecolor{skd}{HTML}{2E7D32}  \definecolor{skf}{HTML}{BFE3B4}   % skew buffers, as in the register figure
+
+\tikzset{
+  blk/.style 2 args={draw=#1, fill=#2, rounded corners=4pt, thick, align=center,
+                     font=\scriptsize, inner sep=3pt},
+  cpu/.style={blk={cpud}{cpuf}},  gpu/.style={blk={gpud}{gpuf}},
+  npu/.style={blk={npud}{npuf}},  mem/.style={blk={memd}{memf}},
+  bus/.style={blk={busd}{busf}},  per/.style={blk={prd}{prf}},
+  sec/.style={blk={secd}{secf}},  pwr/.style={blk={pwrd}{pwrf}},
+  med/.style={blk={medd}{medf}},
+  comb/.style ={draw=copper, fill=coppert, rounded corners=2pt, thick, align=center,
+                font=\scriptsize, inner sep=2pt},                       % combinational logic
+  hard/.style ={draw=harde, fill=hardf, thick, dashed, align=center,
+                font=\scriptsize, inner sep=2pt},                       % hard macro / off-chip
+  sram/.style ={draw=memd, fill=memf, thick, align=center, font=\scriptsize,
+                inner sep=2pt},                                         % SRAM array, not flip-flops
+  ff/.style   ={draw=#1, fill=#1!30, line width=0.35pt},                % one flip-flop square
+  ffgone/.style={draw=muted, fill=white, densely dashed, line width=0.35pt},
+  panel/.style={draw=muted, rounded corners=6pt, line width=0.9pt},
+  ptitle/.style={anchor=north west, font=\normalsize\bfseries, text=ink, inner sep=0pt},
+  note/.style ={font=\scriptsize, text=ink, align=left, inner sep=0pt},
+  lab/.style  ={font=\tiny, text=muted, inner sep=1pt},
+  axi/.style  ={{Stealth[length=2.6mm]}-{Stealth[length=2.6mm]}, line width=2.2pt, copper},
+  axi1/.style ={-{Stealth[length=2.6mm]}, line width=2.2pt, copper},
+  apb/.style  ={{Stealth[length=1.8mm]}-{Stealth[length=1.8mm]}, line width=1pt, copper},
+  apb1/.style ={-{Stealth[length=1.8mm]}, line width=1pt, copper},
+  dat/.style  ={-{Stealth[length=1.8mm]}, thick, pcbmid},
+  ctl/.style  ={-{Stealth[length=1.8mm]}, densely dashed, thick, muted},
+  irq/.style  ={-{Stealth[length=2mm]}, densely dotted, line width=1.3pt, bad},
+  num/.style  ={circle, fill=copper, text=white, font=\scriptsize\bfseries, inner sep=1pt,
+                minimum size=0.46cm},
+  ours/.style ={draw=bad, line width=1.2pt, densely dashed, rounded corners=4pt},
+}
+
+% ---------------- helpers ----------------
+\newcommand{\rn}[1]{\texttt{#1}}
+% \ffrow{x}{y}{n}{cell}{style}: n flip-flops in a row, bottom-left corner at (x,y)
+\newcommand{\ffrow}[5]{\foreach \q in {1,...,#3}{\draw[#5] ({#1+(\q-1)*#4},{#2}) rectangle ++(#4,#4);}}
+% \ffcol{x}{y}{n}{cell}{style}: n flip-flops in a column, top-left corner at (x,y)
+\newcommand{\ffcol}[5]{\foreach \q in {1,...,#3}{\draw[#5] ({#1},{#2-\q*#4}) rectangle ++(#4,#4);}}
+% \ffgrid{x}{ytop}{n}{per row}{cell}{style}: n flip-flops, filled row by row from the top-left
+\newcommand{\ffgrid}[6]{\pgfmathtruncatemacro{\gl}{#3-1}%
+  \foreach \b in {0,...,\gl}{\pgfmathtruncatemacro{\gc}{mod(\b,#4)}\pgfmathtruncatemacro{\gr}{div(\b,#4)}%
+    \draw[#6] ({#1+\gc*#5},{#2-(\gr+1)*#5}) rectangle ++(#5,#5);}}
+
+% every figure: same page size, title, footer
+\newcommand{\canvas}{\useasboundingbox (-0.3,-0.2) rectangle (38.6,30.4);}
+\newcommand{\figtitle}[3]{%
+  \node[num, minimum size=0.9cm, font=\Large\bfseries] at (0.45,29.55) {#1};
+  \node[anchor=west, font=\LARGE\bfseries, text=pcb] at (1.15,29.55) {#2};
+  \node[anchor=west, font=\small, text=ink] at (0,28.7) {#3};}
+\newcommand{\figfoot}[1]{\node[anchor=west, font=\scriptsize, text=muted] at (0,0.25) {#1};}
+% \panel{x0}{y0}{x1}{y1}{title}
+\newcommand{\panel}[5]{\draw[panel] (#1,#2) rectangle (#3,#4);
+  \node[ptitle] at ({#1+0.3},{#4-0.25}) {#5};}
+
+% ---------------- timing diagrams: 1 cycle = \cw cm, low at y, high at y+0.45 ----------------
+\newcommand{\cw}{1.0}
+\newcommand{\wclk}[3]{% x0 y ncycles
+  \foreach \k in {1,...,#3}{\draw[pcb, thick] ({#1+(\k-1)*\cw},#2) -- ++(0,0.45) -- ++(0.5*\cw,0)
+     -- ++(0,-0.45) -- ++(0.5*\cw,0);}}
+\newcommand{\wsig}[3]{% x0 y {level per cycle, e.g. 0,1,1,0}
+  \gdef\wprev{x}%
+  \foreach \v [count=\k from 0] in {#3}{%
+    \draw[pcb, thick] ({#1+\k*\cw},{#2+0.45*\v}) -- ++(\cw,0);
+    \if x\wprev\else\ifnum\wprev=\v\else\draw[pcb, thick] ({#1+\k*\cw},#2) -- ++(0,0.45);\fi\fi
+    \global\let\wprev\v}}
+\newcommand{\wbus}[5]{% x0 y c0 c1 text: one value held from cycle c0 to cycle c1
+  \draw[pcbmid, thick, fill=white] ({#1+(#3)*\cw},{#2+0.225}) -- ({#1+(#3)*\cw+0.08},{#2+0.45})
+    -- ({#1+(#4)*\cw-0.08},{#2+0.45}) -- ({#1+(#4)*\cw},{#2+0.225}) -- ({#1+(#4)*\cw-0.08},#2)
+    -- ({#1+(#3)*\cw+0.08},#2) -- cycle;
+  \node[font=\tiny\ttfamily] at ({#1+((#3)+(#4))*\cw/2},{#2+0.225}) {#5};}
+\newcommand{\widle}[4]{% x0 y c0 c1: bus idle (no value)
+  \draw[muted, thick] ({#1+(#3)*\cw},{#2+0.225}) -- ({#1+(#4)*\cw},{#2+0.225});}
+\newcommand{\wname}[3]{\node[anchor=east, font=\scriptsize\ttfamily] at ({#1-0.15},{#2+0.225}) {#3};}

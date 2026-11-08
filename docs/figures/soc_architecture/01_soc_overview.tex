@@ -1,0 +1,232 @@
+% 01_soc_overview.tex -- the whole SoC on one page; every numbered block has its own figure.
+% Build: tectonic 01_soc_overview.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{1}{The whole SoC: every block on one chip}
+  {A typical phone / edge-AI system-on-chip. Orange number = the figure that zooms into that block.
+   Thick copper = AXI data bus, thin copper = APB / control bus, red dotted = interrupt wire.}
+
+% ---------------- SoC boundary ----------------
+\draw[pcb, line width=1.6pt, rounded corners=8pt] (0,8.6) rectangle (38.3,28.1);
+\node[anchor=north west, font=\small\bfseries, text=pcb] at (0.3,27.95) {SoC = one silicon die};
+\node[anchor=north east, font=\small, text=muted] at (38.0,27.95) {all sizes are typical examples};
+
+% =====================================================================
+% row 1: compute engines
+% =====================================================================
+% ---- CPU cluster ----
+\draw[cpu] (0.4,19.6) rectangle (10.6,27.3);
+\node[anchor=north west, font=\normalsize\bfseries, text=cpud] at (0.6,27.15) {CPU cluster};
+\node[num] at (8.9,26.95) {2}; \node[num] at (9.5,26.95) {3};
+\foreach \k in {0,1}{
+  \node[cpu, fill=white, minimum width=2.3cm, minimum height=2.7cm, text width=2.1cm, anchor=south west]
+    at ({0.8+\k*2.5},23.55) {\textbf{big core \k}\\out-of-order\\[2pt]L1-I 64 KB\\L1-D 64 KB\\L2 1 MB};}
+\foreach \k in {0,...,3}{
+  \node[cpu, fill=white, minimum width=1.05cm, minimum height=2.7cm, text width=0.9cm, anchor=south west,
+        font=\tiny] at ({5.85+\k*1.13},23.55) {\textbf{little}\\\textbf{core \k}\\in-order\\[2pt]L1\\32+32\\KB};}
+\node[sram, minimum width=9.5cm, minimum height=1.9cm, text width=9.2cm, anchor=south west]
+  at (0.8,21.3) {\textbf{shared L3 cache 8 MB} $\cdot$ snoop filter $\cdot$ cluster control unit\\
+                 keeps the 6 cores' caches coherent (same value everywhere)};
+\node[bus, minimum width=9.5cm, minimum height=0.9cm, anchor=south west] at (0.8,20.0)
+  {coherent port to the NoC (CHI / ACE)};
+
+% ---- GPU ----
+\draw[gpu] (11.0,19.6) rectangle (19.4,27.3);
+\node[anchor=north west, font=\normalsize\bfseries, text=gpud] at (11.2,27.15) {GPU};
+\node[num] at (18.9,26.95) {4};
+\node[gpu, fill=white, minimum width=7.8cm, minimum height=0.95cm, anchor=south west] at (11.3,25.45)
+  {command processor $\cdot$ work dispatcher $\cdot$ GPU MMU};
+\foreach \r in {0,1}{\foreach \c in {0,...,3}{
+  \node[gpu, fill=white, minimum width=1.8cm, minimum height=1.25cm, anchor=south west, font=\tiny]
+    at ({11.3+\c*2.0},{22.75+\r*1.38}) {\textbf{shader core}\\64 lanes};}}
+\node[comb, minimum width=7.8cm, minimum height=0.75cm, anchor=south west] at (11.3,21.75)
+  {fixed function: tiler $\cdot$ rasterizer $\cdot$ texture $\cdot$ blend};
+\node[sram, minimum width=7.8cm, minimum height=1.25cm, anchor=south west] at (11.3,20.0)
+  {\textbf{GPU L2 cache 2 MB}\\shared by all shader cores};
+
+% ---- NPU ----
+\draw[npu] (19.8,19.6) rectangle (29.0,27.3);
+\node[anchor=north west, font=\normalsize\bfseries, text=npud] at (20.0,27.15) {NPU (AI accelerator)};
+\node[num] at (28.5,26.95) {5};
+\node[npu, fill=white, minimum width=2.6cm, minimum height=1.05cm, anchor=south west, font=\tiny]
+  at (20.1,25.35) {\textbf{control regs}\\AXI-Lite + IRQ};
+\node[npu, fill=white, minimum width=2.7cm, minimum height=1.05cm, anchor=south west, font=\tiny]
+  at (22.9,25.35) {\textbf{command}\\\textbf{processor}};
+\node[npu, fill=white, minimum width=2.7cm, minimum height=1.05cm, anchor=south west, font=\tiny]
+  at (25.8,25.35) {\textbf{DMA}\\AXI master};
+\foreach \nm [count=\k from 0] in {weights, inputs, outputs}{
+  \node[sram, minimum width=2.75cm, minimum height=0.85cm, anchor=south west, font=\tiny]
+    at ({20.1+\k*2.88},24.3) {\textbf{SRAM: \nm}\\ping $|$ pong};}
+\foreach \r in {0,...,7}{\foreach \c in {0,...,7}{
+  \draw[ff=npud] ({20.75+\c*0.42},{20.35+\r*0.42}) rectangle ++(0.34,0.34);}}
+\draw[dat] (20.15,22.05) -- (20.7,22.05);
+\draw[dat] (22.4,24.25) -- (22.4,23.75);
+\node[lab, text=npud, font=\tiny\bfseries, anchor=south] at (22.4,19.95) {MAC array 32$\times$32 int8 (drawn 8$\times$8)};
+\draw[ours] (20.6,20.2) rectangle (24.25,23.8);
+\node[npu, fill=white, minimum width=4.1cm, minimum height=0.6cm, anchor=south west, font=\tiny] at (24.6,23.25)
+  {accumulators int32 (registers)};
+\node[comb, minimum width=4.1cm, minimum height=0.6cm, anchor=south west, font=\tiny] at (24.6,22.5)
+  {+ bias $\rightarrow$ requantize to int8};
+\node[comb, minimum width=4.1cm, minimum height=0.6cm, anchor=south west, font=\tiny] at (24.6,21.75)
+  {activation (ReLU) $\rightarrow$ pooling};
+\node[anchor=north west, font=\tiny, text=bad, text width=4.1cm, align=left] at (24.6,21.55)
+  {\textbf{red dashed} = what your \rn{mm\_core} already is:\\a 4$\times$4 MAC array + control regs\\+ small RAM buffers};
+
+% ---- media ----
+\draw[med] (29.4,19.6) rectangle (37.9,27.3);
+\node[anchor=north west, font=\normalsize\bfseries, text=medd] at (29.6,27.15) {Media and sensing};
+\foreach \nm/\tx [count=\k from 0] in {
+    ISP (camera)/{demosaic, denoise, HDR, 3A},
+    DSP/{audio, sensors, always-on voice},
+    video codec/{H.265 / AV1 encode + decode},
+    display controller/{layers, scaling, MIPI DSI out}}{
+  \node[med, fill=white, minimum width=7.9cm, minimum height=1.45cm, text width=7.6cm, anchor=south west]
+    at (29.7,{24.85-\k*1.62}) {\textbf{\nm}\\\tx};}
+
+% =====================================================================
+% row 2: interconnect
+% =====================================================================
+\draw[bus] (0.4,16.3) rectangle (37.9,18.95);
+\node[anchor=north west, font=\normalsize\bfseries, text=busd] at (0.6,18.85) {On-chip interconnect (network-on-chip)};
+\node[num] at (9.6,18.55) {6};
+\foreach \x in {3.0,9.0,15.2,21.6,27.6,32.4}{
+  \node[draw=busd, fill=white, thick, minimum size=0.8cm, font=\tiny\bfseries] (r\x) at (\x,17.15) {R};}
+\draw[busd, line width=2pt] (3.4,17.15) -- (8.6,17.15) (9.4,17.15) -- (14.8,17.15) (15.6,17.15) -- (21.2,17.15)
+  (22.0,17.15) -- (27.2,17.15) (28.0,17.15) -- (32.0,17.15) (32.8,17.15) -- (33.9,17.15);
+\node[font=\tiny, text=busd] at (6.0,16.6) {R = router: buffers + arbiter + switch};
+\node[sram, minimum width=3.8cm, minimum height=1.6cm, anchor=south west, font=\tiny] at (33.9,16.45)
+  {\textbf{system level cache}\\\textbf{8 MB}\\shared by CPU, GPU, NPU};
+\node[font=\tiny, text=busd, align=center] at (18.4,16.6) {address decode $\cdot$ arbitration $\cdot$ QoS (who goes first)};
+
+% compute engines -> NoC
+\foreach \x in {5.5,15.2,24.4,33.6}{\draw[axi] (\x,19.6) -- (\x,18.95);}
+
+% =====================================================================
+% row 3: system blocks
+% =====================================================================
+% ---- memory controller ----
+\draw[mem] (0.4,9.0) rectangle (8.4,15.6);
+\node[anchor=north west, font=\normalsize\bfseries, text=memd] at (0.6,15.45) {DRAM controller};
+\node[num] at (7.9,15.2) {7};
+\node[mem, fill=white, minimum width=7.4cm, minimum height=1.35cm, text width=7.1cm, anchor=south west] at (0.7,12.85)
+  {\textbf{front-end}: AXI ports, QoS, read / write queues, address mapping};
+\node[mem, fill=white, minimum width=7.4cm, minimum height=1.35cm, text width=7.1cm, anchor=south west] at (0.7,11.3)
+  {\textbf{scheduler}: bank state machines, timing counters, refresh timer};
+\node[hard, minimum width=7.4cm, minimum height=1.35cm, text width=7.1cm, anchor=south west] at (0.7,9.3)
+  {\textbf{PHY} (analog): serializers, delay lines, I/O pads, link training};
+
+% ---- DMA + GIC ----
+\draw[per] (8.8,9.0) rectangle (15.6,15.6);
+\node[anchor=north west, font=\normalsize\bfseries, text=prd] at (9.0,15.45) {DMA + interrupts};
+\node[num] at (15.1,15.2) {8};
+\node[per, fill=white, minimum width=6.2cm, minimum height=2.3cm, text width=5.9cm, anchor=south west] at (9.1,12.2)
+  {\textbf{system DMA}: 8 channels\\copies memory $\rightarrow$ memory or memory $\leftrightarrow$ device without the CPU, following descriptors};
+\node[per, fill=white, minimum width=6.2cm, minimum height=2.6cm, text width=5.9cm, anchor=south west] at (9.1,9.3)
+  {\textbf{GIC} (interrupt controller)\\hundreds of IRQ wires in $\rightarrow$ enable, priority, target $\rightarrow$ one IRQ to the chosen CPU core};
+
+% ---- clocks, reset, power ----
+\draw[pwr] (16.0,9.0) rectangle (23.2,15.6);
+\node[anchor=north west, font=\normalsize\bfseries, text=pwrd] at (16.2,15.45) {Clocks, reset, power};
+\node[num] at (22.7,15.2) {9};
+\foreach \nm/\tx [count=\k from 0] in {
+    PLLs/{multiply 24 MHz up to 3 GHz},
+    clock gating/{stop clocks of idle blocks},
+    reset controller/{assert async, release in sync},
+    PMU + DVFS/{power domains on/off, voltage + frequency}}{
+  \node[pwr, fill=white, minimum width=6.6cm, minimum height=1.25cm, text width=6.3cm, anchor=south west]
+    at (16.3,{13.0-\k*1.35}) {\textbf{\nm}: \tx};}
+
+% ---- security, boot, debug ----
+\draw[sec] (23.6,9.0) rectangle (30.6,15.6);
+\node[anchor=north west, font=\normalsize\bfseries, text=secd] at (23.8,15.45) {Boot, security, debug};
+\node[num] at (30.1,15.2) {10};
+\foreach \nm/\tx [count=\k from 0] in {
+    boot ROM + SRAM/{first code after reset},
+    OTP fuses/{root-key hash, lock bits},
+    crypto + TRNG/{AES, SHA, RSA/ECC, random},
+    TrustZone + debug/{secure world, JTAG, trace}}{
+  \node[sec, fill=white, minimum width=6.4cm, minimum height=1.25cm, text width=6.1cm, anchor=south west]
+    at (23.9,{13.0-\k*1.35}) {\textbf{\nm}: \tx};}
+
+% ---- peripherals ----
+\draw[per] (31.0,9.0) rectangle (37.9,15.6);
+\node[anchor=north west, font=\normalsize\bfseries, text=prd] at (31.2,15.45) {Peripherals};
+\node[num] at (37.4,15.2) {11};
+\node[bus, minimum width=6.3cm, minimum height=0.8cm, anchor=south west] at (31.3,13.6) {AXI $\rightarrow$ APB bridge};
+\foreach \nm [count=\k from 0] in {UART, SPI, I2C, GPIO, timers, watchdog}{
+  \pgfmathtruncatemacro{\cc}{mod(\k,3)}\pgfmathtruncatemacro{\rr}{div(\k,3)}
+  \node[per, fill=white, minimum width=1.95cm, minimum height=0.8cm, anchor=south west, font=\tiny]
+    at ({31.3+\cc*2.12},{12.55-\rr*0.95}) {\nm};}
+\node[per, fill=white, minimum width=6.3cm, minimum height=1.9cm, text width=6.0cm, anchor=south west] at (31.3,9.3)
+  {\textbf{high-speed I/O} (own PHYs):\\USB 3 $\cdot$ PCIe $\cdot$ UFS storage\\MIPI CSI-2 camera $\cdot$ MIPI DSI display};
+
+% NoC -> row 3
+\draw[axi] (4.4,16.3) -- (4.4,15.6);
+\draw[axi] (12.2,16.3) -- (12.2,15.6);
+\draw[apb] (19.6,16.3) -- (19.6,15.6);
+\draw[apb] (27.1,16.3) -- (27.1,15.6);
+\draw[axi] (34.4,16.3) -- (34.4,15.6);
+
+% interrupt wires (dedicated wires, not through the NoC)
+\draw[irq] (20.3,19.6) -- (20.3,15.95) -- (14.6,15.95) -- (14.6,15.6);
+\draw[irq] (10.2,15.6) -- (10.2,19.6);
+\node[font=\tiny\bfseries, text=bad, anchor=west, fill=white, inner sep=1pt] at (15.0,15.95) {IRQ wire from NPU};
+\node[font=\tiny\bfseries, text=bad, anchor=east, fill=busf, inner sep=1pt, rotate=90] at (9.95,17.9) {IRQ to CPU};
+
+% =====================================================================
+% off-chip parts
+% =====================================================================
+\node[anchor=west, font=\small\bfseries, text=harde] at (0,8.15) {off-chip (on the board)};
+\node[hard, minimum width=8.0cm, minimum height=1.9cm, text width=7.7cm, anchor=south west] at (0.4,5.2)
+  {\textbf{LPDDR5 DRAM} 8--16 GB\\4 channels $\times$ 16 bit, 6400 MT/s $\approx$ 51 GB/s};
+\node[hard, minimum width=3.3cm, minimum height=1.9cm, text width=3.1cm, anchor=south west] at (16.0,5.2)
+  {\textbf{PMIC}\\makes 10+ supply rails};
+\node[hard, minimum width=3.4cm, minimum height=1.9cm, text width=3.2cm, anchor=south west] at (19.8,5.2)
+  {\textbf{crystal}\\24 MHz reference};
+\node[hard, minimum width=3.3cm, minimum height=1.9cm, text width=3.1cm, anchor=south west] at (23.6,5.2)
+  {\textbf{JTAG probe}\\lab / debug only};
+\node[hard, minimum width=3.3cm, minimum height=1.9cm, text width=3.1cm, anchor=south west] at (27.3,5.2)
+  {\textbf{UFS flash}\\128 GB -- 1 TB};
+\node[hard, minimum width=3.3cm, minimum height=1.9cm, text width=3.1cm, anchor=south west] at (31.0,5.2)
+  {\textbf{camera}\\image sensor};
+\node[hard, minimum width=3.3cm, minimum height=1.9cm, text width=3.1cm, anchor=south west] at (34.6,5.2)
+  {\textbf{display}\\panel};
+\draw[axi] (6.8,9.0) -- (6.8,7.1);
+\draw[apb] (17.65,9.0) -- (17.65,7.1);
+\draw[apb1] (21.5,7.1) -- (21.5,9.0);
+\draw[apb] (25.25,9.0) -- (25.25,7.1);
+\draw[apb] (31.6,9.0) -- (31.6,8.4) -- (28.95,8.4) -- (28.95,7.1);
+\draw[apb] (32.65,9.0) -- (32.65,7.1);
+\draw[apb] (36.25,9.0) -- (36.25,7.1);
+
+% =====================================================================
+% bottom panels
+% =====================================================================
+\panel{0}{0.7}{12.5}{4.75}{How to read this map}
+\node[note, font=\small, anchor=north west, text width=11.9cm] at (0.3,4.05) {%
+  Colour = kind of block: \textcolor{cpud}{\textbf{CPU}}, \textcolor{gpud}{\textbf{GPU}}, \textcolor{npud}{\textbf{NPU}},
+  \textcolor{memd}{\textbf{memory}}, \textcolor{busd}{\textbf{interconnect}}, \textcolor{prd}{\textbf{peripherals / DMA}},
+  \textcolor{secd}{\textbf{security}}, \textcolor{pwrd}{\textbf{clocks / power}}, \textcolor{medd}{\textbf{media}}.\\[2pt]
+  Purple box = SRAM array. Peach = combinational logic. Dashed blue = analog or off-chip.\\[2pt]
+  Every block is built from the same three things as your \rn{mm\_core}: flip-flops, combinational logic and SRAM.};
+\panel{12.8}{0.7}{25.4}{4.75}{One AI job in 6 steps (Figure 8 has every detail)}
+\node[note, font=\small, anchor=north west, text width=12.0cm] at (13.1,4.05) {%
+  \textbf{1} CPU puts the input and the weights in DRAM.\quad
+  \textbf{2} CPU writes the NPU's START register (AXI-Lite).\quad
+  \textbf{3} NPU DMA reads the data from DRAM through the NoC into its SRAM.\quad
+  \textbf{4} MAC array computes, post-processing makes int8 outputs.\quad
+  \textbf{5} DMA writes the result to DRAM.\quad
+  \textbf{6} NPU raises its IRQ wire $\rightarrow$ GIC $\rightarrow$ CPU reads the result.};
+\panel{25.7}{0.7}{38.3}{4.75}{Where your project fits}
+\node[note, font=\small, anchor=north west, text width=12.0cm] at (26.0,4.05) {%
+  \rn{mm\_core} = the NPU's \textbf{MAC array} (4$\times$4 instead of 32$\times$32) + \textbf{control registers}
+  (\rn{mm\_regs}) + small \textbf{RAM buffers} (8 M9K).\\[2pt]
+  UART + bridge = the bus. \rn{host.py} = the driver on the CPU. Polling STATUS = instead of the IRQ.\\[2pt]
+  Not in your design yet: DMA, command processor, post-processing, big SRAM.};
+
+\figfoot{Sizes and speeds are typical values for a recent phone / edge-AI SoC, not one specific chip. Figures 2--13 zoom into each numbered block.}
+\end{tikzpicture}
+\end{document}

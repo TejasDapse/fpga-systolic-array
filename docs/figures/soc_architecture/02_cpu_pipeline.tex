@@ -1,0 +1,243 @@
+% 02_cpu_pipeline.tex -- a 5-stage RV32I pipeline drawn register by register.
+% Build: tectonic 02_cpu_pipeline.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+% \pipereg{x}{ytop}{colour}{name/bits,...}: one pipeline register as fields of flip-flops (4 per row),
+% field names on the left
+\newcommand{\pipereg}[4]{%
+  \xdef\pry{#2}%
+  \foreach \nm/\nb in {#4}{%
+    \pgfmathtruncatemacro{\nrows}{ceil(\nb/4)}%
+    \ffgrid{#1}{\pry}{\nb}{4}{0.14}{ff=#3}%
+    \node[lab, text=ink, anchor=east] at ({#1-0.05},{\pry-\nrows*0.07}) {\nm\ \nb};%
+    \pgfmathsetmacro{\newy}{\pry-\nrows*0.14-0.12}\xdef\pry{\newy}}}
+\tikzset{fwd/.style={-{Stealth[length=1.8mm]}, thick, copper},
+         brn/.style={-{Stealth[length=1.8mm]}, thick, densely dashed, bad},
+         wbk/.style={-{Stealth[length=1.8mm]}, thick, cpud}}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{2}{CPU core: a 5-stage RISC-V pipeline, register by register}
+  {A simple RV32I core like the one on your roadmap. Columns of squares = pipeline registers (flip-flops).
+   Each stage is combinational logic between two registers: the same pattern as your PE.}
+
+% =====================================================================
+% datapath
+% =====================================================================
+\draw[panel] (0,17.7) rectangle (38.3,28.1);
+\fill[cpuf] (0.1,27.0) rectangle (38.2,27.75);
+\foreach \x in {8.55,16.95,26.05,32.85}{\draw[cpud, densely dashed] (\x,27.75) -- (\x,18.0);}
+\foreach \x/\t in {4.3/{IF $\cdot$ fetch}, 12.75/{ID $\cdot$ decode + read registers}, 21.5/{EX $\cdot$ execute},
+                   29.45/{MEM $\cdot$ data memory}, 35.6/{WB $\cdot$ write back}}{
+  \node[font=\small\bfseries, text=cpud] at (\x,27.37) {\t};}
+
+% ---- pipeline registers ----
+\pipereg{1.7}{25.9}{cpud}{pc/32}
+\node[font=\scriptsize\bfseries, text=cpud] at (1.98,26.15) {PC $\cdot$ 32 FF};
+\pipereg{8.3}{25.9}{cpud}{pc/32,instr/32}
+\node[font=\scriptsize\bfseries, text=cpud] at (8.58,26.15) {IF/ID $\cdot$ 64 FF};
+\pipereg{16.7}{25.9}{cpud}{pc/32,ctrl/8,funct/4,rd/5,rs1/5,rs2/5,rs1 val/32,rs2 val/32,imm/32}
+\node[font=\scriptsize\bfseries, text=cpud] at (16.98,26.15) {ID/EX $\cdot$ 155 FF};
+\pipereg{25.8}{22.66}{cpud}{ctrl/4,rd/5,alu/32,store/32}
+\node[font=\scriptsize\bfseries, text=cpud] at (25.0,23.05) {EX/MEM $\cdot$ 73 FF};
+\pipereg{32.6}{24.12}{cpud}{ctrl/2,rd/5,alu/32,load/32}
+\node[font=\scriptsize\bfseries, text=cpud] at (32.88,24.35) {MEM/WB $\cdot$ 71 FF};
+
+% ---- IF ----
+\node[sram, minimum width=3.2cm, minimum height=2.0cm, anchor=south west] at (3.4,23.4)
+  {\textbf{I-cache}\\32 KB SRAM\\(Figure 3)};
+\draw[dat] (2.26,25.0) -- (3.4,25.0);
+\node[lab, anchor=south] at (2.83,25.0) {addr};
+\draw[dat] (2.26,25.6) -- (7.2,25.6);
+\draw[dat] (6.6,24.1) -- (7.25,24.1);
+\node[circle, comb, minimum size=0.62cm, inner sep=0pt] (p4) at (1.98,23.4) {+4};
+\draw[dat] (1.98,24.78) -- (p4);
+\node[comb, minimum width=1.2cm, minimum height=1.0cm] (npc) at (1.98,21.8) {next-PC\\mux};
+\draw[dat] (p4) -- (npc);
+\draw[dat] (npc.west) -- (0.55,21.8) -- (0.55,24.9) -- (1.7,24.9);
+\node[comb, minimum width=4.4cm, minimum height=1.5cm, text width=4.2cm, anchor=south west, font=\tiny] at (3.2,19.3)
+  {\textbf{hazard unit (load-use)}\\if ID/EX holds a load whose rd = rs1 or rs2 of the instruction in ID:
+   hold PC + IF/ID for 1 cycle, put a bubble (all ctrl = 0) into ID/EX};
+
+% ---- ID ----
+\draw[dat] (8.86,24.1) -- (9.05,24.1) -- (9.05,19.9);
+\node[comb, minimum width=2.7cm, minimum height=0.9cm, anchor=south west, font=\tiny] at (9.3,24.35)
+  {\textbf{decode + control}\\opcode $\rightarrow$ ctrl bits};
+\draw[dat] (9.05,24.8) -- (9.3,24.8);
+\draw[dat] (12.0,24.6) -- (15.55,24.6);
+\node[lab, anchor=south] at (13.8,24.62) {ctrl, funct, rd, rs1, rs2};
+\draw[dat] (8.86,25.45) -- (15.55,25.45);
+\node[lab, anchor=south] at (12.2,25.47) {pc};
+% register file: 32 x 32 flip-flops, row x0 is constant 0
+\draw[cpud, thick] (12.3,21.0) rectangle (15.22,23.95);
+\ffgrid{12.4}{23.85}{32}{32}{0.085}{ffgone}
+\ffgrid{12.4}{23.765}{992}{32}{0.085}{ff=cpud}
+\node[lab, text=cpud, font=\tiny\bfseries, anchor=north] at (13.76,24.32) {register file x0--x31};
+\node[lab, text=ink, fill=white] at (13.76,21.55) {31 $\times$ 32 = 992 FF};
+\node[lab, text=ink, fill=white] at (13.76,21.25) {top row x0 = always 0};
+\draw[dat] (9.05,23.2) -- (12.3,23.2);
+\node[lab, anchor=south] at (10.65,23.22) {rs1, rs2 (read ports)};
+\draw[dat] (15.22,22.24) -- (15.55,22.24);
+\draw[dat] (15.22,21.3) -- (15.38,21.3) -- (15.38,21.0) -- (15.55,21.0);
+\node[comb, minimum width=2.7cm, minimum height=1.1cm, anchor=south west, font=\tiny] at (9.3,19.25)
+  {\textbf{immediate gen}\\cut + sign-extend to 32 bit};
+\draw[dat] (9.05,20.2) -- (9.3,20.2);
+\draw[dat] (12.0,19.76) -- (15.55,19.76);
+
+% ---- EX ----
+\node[comb, minimum width=0.9cm, minimum height=0.7cm, font=\tiny] (fa) at (18.45,22.25) {fwd\\mux A};
+\node[comb, minimum width=0.9cm, minimum height=0.7cm, font=\tiny] (fb) at (18.45,21.0) {fwd\\mux B};
+\draw[dat] (17.26,22.24) -- (fa.west);
+\draw[dat] (17.26,21.0) -- (fb.west);
+\node[comb, minimum width=0.8cm, minimum height=1.6cm, font=\tiny, anchor=south west] (as) at (19.3,19.6) {rs2\\or\\imm};
+\draw[dat] (fb.east) -- (19.3,21.0);
+\draw[dat] (17.26,19.76) -- (19.3,19.76);
+\draw[pcbmid, thick, fill=coppert] (20.6,22.8) -- (22.2,22.0) -- (22.2,20.6) -- (20.6,19.8) -- (20.6,21.0) -- (20.9,21.3) -- (20.6,21.6) -- cycle;
+\node[font=\scriptsize\bfseries, text=copper] at (21.55,21.3) {ALU};
+\draw[dat] (fa.east) -- (20.6,22.25);
+\draw[dat] (20.1,20.4) -- (20.6,20.4);
+\draw[dat] (22.2,21.44) -- (24.7,21.44);
+\draw[dat] (19.1,21.0) -- (19.1,19.35) -- (23.1,19.35) -- (23.1,20.2) -- (24.7,20.2);
+\node[lab, anchor=north] at (21.2,19.33) {store data = forwarded rs2};
+\node[comb, minimum width=5.3cm, minimum height=0.85cm, anchor=south west, font=\tiny] at (19.3,23.5)
+  {\textbf{branch unit}: compare rs1, rs2 $\rightarrow$ taken? $\cdot$ target = pc + imm};
+\node[comb, minimum width=5.3cm, minimum height=0.85cm, anchor=south west, font=\tiny] at (19.3,24.85)
+  {\textbf{forwarding unit}: rd of EX/MEM, MEM/WB = rs1 / rs2 ? $\rightarrow$ mux selects};
+\draw[ctl] (19.3,25.27) -- (18.75,25.27) -- (18.75,22.6);
+
+% forwarding paths (top track)
+\draw[fwd] (26.36,21.44) -- (26.6,21.44) -- (26.6,26.55) -- (18.15,26.55) -- (18.15,22.6);
+\draw[fwd] (35.8,22.4) -- (35.8,26.75) -- (18.4,26.75) -- (18.4,22.6);
+\node[font=\tiny\bfseries, text=copper, fill=white, inner sep=1pt] at (30.2,26.65)
+  {forwarding: a result goes straight back to the ALU (no waiting for WB)};
+
+% branch path (track at y = 18.7)
+\draw[brn] (19.3,23.9) -- (17.6,23.9) -- (17.6,18.7) -- (1.98,18.7) -- (npc.south);
+\node[font=\tiny\bfseries, text=bad, fill=white, inner sep=1pt] at (8.6,18.7)
+  {branch taken: target $\rightarrow$ next-PC mux, flush the 2 younger instructions};
+
+% ---- MEM ----
+\node[sram, minimum width=3.0cm, minimum height=2.6cm, anchor=south west, text width=2.8cm] at (27.4,19.8)
+  {\textbf{D-cache}\\32 KB SRAM\\[2pt]address = alu\\data in = store};
+\draw[dat] (26.36,21.44) -- (27.4,21.44);
+\draw[dat] (26.36,20.2) -- (27.4,20.2);
+\node[comb, minimum width=1.05cm, minimum height=1.6cm, anchor=south west, font=\tiny] at (30.65,20.85)
+  {byte /\\half\\select +\\sign-ext};
+\draw[dat] (30.4,21.66) -- (30.65,21.66);
+\draw[dat] (31.7,21.66) -- (31.85,21.66);
+\draw[dat] (26.6,22.9) -- (31.85,22.9);
+\node[lab, anchor=south] at (29.0,22.92) {alu result passes by the cache};
+\node[lab, anchor=north west, text width=4.0cm] at (26.6,19.45) {rd and ctrl also move one register to the right every clock};
+
+% ---- WB ----
+\node[comb, minimum width=1.2cm, minimum height=2.2cm, font=\tiny] (wbm) at (34.6,22.4) {WB\\mux\\load /\\alu /\\pc+4};
+\draw[dat] (33.16,22.9) -- (34.0,22.9);
+\draw[dat] (33.16,21.66) -- (34.0,21.66);
+\draw[wbk] (35.2,22.4) -- (36.6,22.4) -- (36.6,18.2) -- (15.0,18.2) -- (15.0,21.0);
+\node[font=\tiny\bfseries, text=cpud, fill=white, inner sep=1pt] at (26.0,18.2)
+  {write back: value $\rightarrow$ register rd at the next clock edge (writes to x0 are ignored)};
+
+% =====================================================================
+% (a) pipeline in time
+% =====================================================================
+\panel{0}{9.0}{19.0}{17.4}{Pipeline in time: 4 instructions, 9 clock cycles}
+\foreach \c in {1,...,9}{\node[font=\scriptsize\bfseries, text=muted] at ({4.8+(\c-1)*1.5+0.75},16.2) {\c};}
+\node[font=\scriptsize\bfseries, text=muted, anchor=east] at (4.6,16.2) {clock cycle};
+\foreach \ins [count=\r from 0] in {{lw x1, 0(x2)}, {add x3, x1, x4}, {sw x3, 8(x2)}, {beq x3, x0, L}}{
+  \node[font=\scriptsize\ttfamily, anchor=west] at (0.35,{15.4-\r*1.0}) {\ins};}
+\foreach \r/\c/\s in {0/1/IF,0/2/ID,0/3/EX,0/4/MEM,0/5/WB,
+                      1/2/IF,1/3/ID,1/5/EX,1/6/MEM,1/7/WB,
+                      2/3/IF,2/5/ID,2/6/EX,2/7/MEM,2/8/WB,
+                      3/5/IF,3/6/ID,3/7/EX,3/8/MEM,3/9/WB}{
+  \node[cpu, minimum width=1.4cm, minimum height=0.75cm, inner sep=0pt, font=\scriptsize\bfseries]
+    at ({4.8+(\c-1)*1.5+0.75},{15.4-\r*1.0}) {\s};}
+\foreach \r/\c/\s in {1/4/ID, 2/4/IF}{
+  \node[draw=muted, densely dashed, fill=white, rounded corners=4pt, minimum width=1.4cm, minimum height=0.75cm,
+        inner sep=0pt, font=\tiny, text=muted, align=center] at ({4.8+(\c-1)*1.5+0.75},{15.4-\r*1.0}) {\s\\stall};}
+% forwarding arrows: lw MEM -> add EX, add EX -> sw EX, add MEM -> beq EX
+\draw[fwd, bend right=25] (10.65,15.03) to (11.55,14.78);
+\draw[fwd, bend right=25] (12.15,14.03) to (13.05,13.78);
+\draw[fwd, bend right=15] (13.65,14.03) to (14.55,12.78);
+\node[note, anchor=north west, text width=18.3cm] at (0.35,11.6) {%
+  $\bullet$ \textbf{Load-use}: \rn{add} needs x1 in EX (cycle 5), but \rn{lw} has it only after MEM (end of cycle 4).
+  One stall cycle, then the value is \textcolor{copper}{\textbf{forwarded}} from MEM/WB.\\[2pt]
+  $\bullet$ \rn{sw} gets x3 from EX/MEM in cycle 6; \rn{beq} gets x3 from MEM/WB in cycle 7. No more stalls.\\[2pt]
+  $\bullet$ Ideal pipeline = 1 instruction per clock. Here 4 instructions finish in 9 cycles (4 + 4 fill + 1 stall).\\[2pt]
+  $\bullet$ If \rn{beq} is taken, it is known only in EX (cycle 7): the 2 instructions behind it are flushed.};
+
+% =====================================================================
+% (b) flip-flop count
+% =====================================================================
+\panel{19.3}{9.0}{38.3}{17.4}{How many flip-flops? (same counting as your mm\_core)}
+\node[anchor=north west, font=\footnotesize, inner sep=0pt] at (19.65,16.65) {%
+  \renewcommand{\arraystretch}{1.1}%
+  \begin{tabular}{@{}l l r@{}}
+    \toprule
+    \textbf{Register} & \textbf{Fields} & \textbf{FF}\\
+    \midrule
+    PC      & pc                                                     & 32\\
+    IF/ID   & pc, instr                                              & 64\\
+    ID/EX   & pc, ctrl, funct, rd, rs1, rs2, rs1 val, rs2 val, imm   & 155\\
+    EX/MEM  & ctrl, rd, alu result, store data                       & 73\\
+    MEM/WB  & ctrl, rd, alu result, load data                        & 71\\
+    \midrule
+    \textbf{Pipeline total} &                                        & \textbf{395}\\
+    Register file & x1--x31, 32 bit each (x0 needs none)             & 992\\
+    \midrule
+    \textbf{Core, register file in FF} &                             & \textbf{1,387}\\
+    \bottomrule
+  \end{tabular}};
+\node[note, anchor=north west, text width=18.1cm] at (19.65,11.45) {%
+  $\bullet$ Your \rn{mm\_core} has 1,084 FF: about the same size as this little CPU.\\[2pt]
+  $\bullet$ On the MAX 10 the register file can go into M9K blocks instead (2 copies give 2 read ports);
+  then the core needs only $\approx$400 FF. M9K reads are clocked, so the design must allow for that.\\[2pt]
+  $\bullet$ I-cache and D-cache are SRAM arrays, not flip-flops (Figure 3). Widths here are one example design.};
+
+% =====================================================================
+% (c) hazards
+% =====================================================================
+\panel{0}{0.7}{19.0}{8.7}{Three kinds of hazard and the logic that fixes them}
+\node[note, font=\small, anchor=north west, text width=8.6cm] at (0.35,7.95) {%
+  \textbf{Structural}: two instructions need the same hardware in one cycle.
+  Fix: separate I-cache and D-cache, 2 read ports on the register file.\\[4pt]
+  \textbf{Data}: an instruction needs a value that is not written yet.
+  Fix: forwarding (0 cycles); a load followed by a user costs 1 stall.\\[4pt]
+  \textbf{Control}: the next PC is unknown until a branch resolves.
+  Fix: guess ``not taken'', flush 2 instructions if wrong. Big cores use branch predictors that are right most of the time.};
+\node[draw=cpud, fill=white, rounded corners=3pt, anchor=north west, align=left, font=\tiny\ttfamily, inner sep=5pt]
+  at (9.3,7.95) {%
+  // forwarding unit (mux A; mux B is the same with rs2)\\
+  if (EXMEM.RegWrite \&\& EXMEM.rd != 0 \&\&\\
+  \ \ \ \ EXMEM.rd == IDEX.rs1)\ \ \ \ \ \ \ fwdA = 2'b10; // from EX/MEM\\
+  else if (MEMWB.RegWrite \&\& MEMWB.rd != 0 \&\&\\
+  \ \ \ \ MEMWB.rd == IDEX.rs1)\ \ \ \ \ \ \ fwdA = 2'b01; // from MEM/WB\\
+  else\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ fwdA = 2'b00; // from ID/EX\\[4pt]
+  // hazard unit: load-use stall\\
+  stall = IDEX.MemRead \&\&\\
+  \ \ \ \ \ \ \ \ (IDEX.rd == IFID.rs1 || IDEX.rd == IFID.rs2);\\[4pt]
+  // pure combinational logic: comparators + AND/OR gates};
+
+% =====================================================================
+% (d) what big cores add
+% =====================================================================
+\panel{19.3}{0.7}{38.3}{8.7}{What a big phone / laptop core adds (out-of-order)}
+\foreach \nm/\tx [count=\k from 0] in {
+    fetch/{6--10 instr per clock + branch predictor},
+    decode/{split into micro-ops},
+    rename/{map x1..x31 to hundreds of physical registers},
+    issue queues/{wait until inputs are ready},
+    execution units/{many ALUs, load/store, FP / SIMD},
+    reorder buffer/{hundreds of instructions in flight; retire in order}}{
+  \node[cpu, fill=white, minimum width=2.85cm, minimum height=2.3cm, text width=2.6cm, anchor=north west, font=\scriptsize]
+    (o\k) at ({19.6+\k*3.1},7.9) {\textbf{\nm}\\[2pt]\tx};}
+\foreach \k [evaluate=\k as \n using int(\k+1)] in {0,...,4}{\draw[dat] (o\k.east) -- (o\n.west);}
+\node[note, font=\small, anchor=north west, text width=18.1cm] at (19.65,5.15) {%
+  $\bullet$ \textbf{Why}: while one instruction waits 100+ cycles for DRAM, the core keeps running later, independent ones.\\[2pt]
+  $\bullet$ \textbf{Same building blocks}: the reorder buffer, queues and rename tables are registers and SRAM;
+  the wake-up and select logic is comparators and muxes, like the forwarding unit above.\\[2pt]
+  $\bullet$ \textbf{Cost}: many times the area and power of this 5-stage core.
+  That is why phones pair a few big cores with several small in-order ones (Figure 1).};
+
+\figfoot{Field widths are one example RV32I design (Patterson \& Hennessy style). Out-of-order sizes are typical ranges, not one specific core.}
+\end{tikzpicture}
+\end{document}

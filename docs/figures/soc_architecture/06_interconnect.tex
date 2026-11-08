@@ -1,0 +1,151 @@
+% 06_interconnect.tex -- AXI channels + handshake, protocol family, crossbar, NoC router.
+% Build: tectonic 06_interconnect.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\newcommand{\tick}[2]{\node[circle, fill=good, text=white, font=\tiny\bfseries, inner sep=0.5pt] at (#1,#2) {\checkmark};}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{6}{Interconnect: how blocks talk (AXI, AXI-Lite, APB, NoC)}
+  {Every transfer is a handshake: the sender raises VALID, the receiver raises READY, and the data moves on the clock edge
+   where both are 1. Your \rn{mm\_regs} bus already works this way.}
+
+% =====================================================================
+% (A) AXI4 channels
+% =====================================================================
+\panel{0}{13.6}{19.0}{28.1}{AXI4: five independent channels (32-bit address, 128-bit data)}
+\node[npu, minimum width=2.6cm, minimum height=11.6cm, anchor=north west, text width=2.4cm] at (0.35,27.2)
+  {\textbf{manager}\\(was ``master'')\\[4pt]e.g. NPU DMA};
+\node[mem, minimum width=2.6cm, minimum height=11.6cm, anchor=north west, text width=2.4cm] at (16.05,27.2)
+  {\textbf{subordinate}\\(was ``slave'')\\[4pt]e.g. DRAM controller};
+\foreach \ch/\dir/\nm/\sigs/\wires [count=\k from 0] in {
+    AW/1/write address/{AWID[3:0], AWADDR[31:0], AWLEN[7:0], AWSIZE[2:0], AWBURST[1:0], AWPROT[2:0]}/54,
+    W/1/write data/{WDATA[127:0], WSTRB[15:0] (byte enables), WLAST}/147,
+    B/0/write response/{BID[3:0], BRESP[1:0] (OKAY / error)}/8,
+    AR/1/read address/{ARID[3:0], ARADDR[31:0], ARLEN[7:0], ARSIZE[2:0], ARBURST[1:0], ARPROT[2:0]}/54,
+    R/0/read data/{RID[3:0], RDATA[127:0], RRESP[1:0], RLAST}/137}{
+  \pgfmathsetmacro{\yy}{26.3-\k*2.3}
+  \ifnum\dir=1 \draw[axi1] (3.0,\yy) -- (16.0,\yy); \else \draw[axi1] (16.0,\yy) -- (3.0,\yy); \fi
+  \node[font=\scriptsize\bfseries, text=busd, anchor=south west, fill=white, inner sep=1pt] at (3.2,{\yy+0.12}) {\ch\ $\cdot$ \nm};
+  \node[font=\scriptsize\bfseries, text=muted, anchor=south east, fill=white, inner sep=1pt] at (15.85,{\yy+0.12}) {\wires\ wires};
+  \node[font=\tiny\ttfamily, anchor=north west, text width=12.6cm, align=left] at (3.2,{\yy-0.15}) {\sigs};
+  \ifnum\dir=1
+    \node[font=\tiny\ttfamily, text=bad, anchor=north west] at (3.2,{\yy-0.55}) {\ch VALID $\rightarrow$\quad $\leftarrow$ \ch READY};
+  \else
+    \node[font=\tiny\ttfamily, text=bad, anchor=north west] at (3.2,{\yy-0.55}) {\ch READY $\rightarrow$\quad $\leftarrow$ \ch VALID};
+  \fi}
+\node[note, anchor=north west, text width=18.2cm] at (0.35,15.3) {%
+  Total: 54 + 147 + 8 + 54 + 137 = \textbf{400 wires} for one port (plus optional CACHE, LOCK, QOS).
+  Reads and writes use separate channels, so both run at once. One address starts a burst of up to 256 beats
+  (LEN + 1); IDs let many requests be in flight and come back out of order.};
+
+% =====================================================================
+% (B) handshake + burst waveforms
+% =====================================================================
+\panel{19.3}{13.6}{38.3}{28.1}{The VALID / READY rule, and a 4-beat read burst}
+\renewcommand{\cw}{1.2}
+\foreach \c in {0,...,11}{\node[lab] at ({22.6+(\c+0.5)*\cw},27.05) {\c};}
+\wname{22.6}{26.35}{clk}     \wclk{22.6}{26.35}{12}
+\wname{22.6}{25.55}{VALID}   \wsig{22.6}{25.55}{0,1,1,1,0,0,0,1,0,1,0,0}
+\wname{22.6}{24.75}{READY}   \wsig{22.6}{24.75}{0,0,0,1,0,1,1,1,0,1,0,0}
+\wname{22.6}{23.95}{DATA}
+\widle{22.6}{23.95}{0}{1} \wbus{22.6}{23.95}{1}{4}{D0} \widle{22.6}{23.95}{4}{7}
+\wbus{22.6}{23.95}{7}{8}{D1} \widle{22.6}{23.95}{8}{9} \wbus{22.6}{23.95}{9}{10}{D2} \widle{22.6}{23.95}{10}{12}
+\foreach \c in {4,8,10}{\draw[good, thick, densely dashed] ({22.6+\c*\cw},23.8) -- ({22.6+\c*\cw},26.9); \tick{{22.6+\c*\cw}}{23.55}}
+\node[lab, text=ink, anchor=north, text width=3.4cm, align=center] at ({22.6+2.0*\cw},23.4) {VALID first; waits for READY; D0 held};
+\node[lab, text=ink, anchor=north, text width=3.0cm, align=center] at ({22.6+6.3*\cw},23.4) {READY first; data moves when VALID comes};
+\node[lab, text=ink, anchor=north, text width=2.2cm, align=center] at ({22.6+10.2*\cw},23.4) {both at once};
+
+\foreach \c in {0,...,11}{\node[lab] at ({22.6+(\c+0.5)*\cw},21.85) {\c};}
+\wname{22.6}{21.15}{clk}      \wclk{22.6}{21.15}{12}
+\wname{22.6}{20.4}{ARVALID}   \wsig{22.6}{20.4}{0,1,1,0,0,0,0,0,0,0,0,0}
+\wname{22.6}{19.65}{ARREADY}  \wsig{22.6}{19.65}{0,0,1,0,0,0,0,0,0,0,0,0}
+\wname{22.6}{18.9}{ARADDR}
+\widle{22.6}{18.9}{0}{1} \wbus{22.6}{18.9}{1}{3}{0x8000\_0000, LEN=3} \widle{22.6}{18.9}{3}{12}
+\wname{22.6}{18.15}{RVALID}   \wsig{22.6}{18.15}{0,0,0,0,0,1,1,1,1,1,0,0}
+\wname{22.6}{17.4}{RREADY}    \wsig{22.6}{17.4}{1,1,1,1,1,1,1,0,1,1,1,1}
+\wname{22.6}{16.65}{RDATA}
+\widle{22.6}{16.65}{0}{5} \wbus{22.6}{16.65}{5}{6}{D0} \wbus{22.6}{16.65}{6}{7}{D1}
+\wbus{22.6}{16.65}{7}{9}{D2 (held)} \wbus{22.6}{16.65}{9}{10}{D3} \widle{22.6}{16.65}{10}{12}
+\wname{22.6}{15.9}{RLAST}     \wsig{22.6}{15.9}{0,0,0,0,0,0,0,0,0,1,0,0}
+\foreach \c in {3,6,7,9,10}{\draw[good, thick, densely dashed] ({22.6+\c*\cw},15.85) -- ({22.6+\c*\cw},21.7);}
+\node[note, anchor=north west, text width=18.2cm] at (19.6,15.55) {%
+  Address accepted at the end of cycle 2. Data comes back after the memory latency. In cycle 7 the receiver is busy
+  (RREADY = 0), so D2 stays on the bus one extra cycle: this is \textbf{back-pressure}. RLAST marks beat 4 of 4.
+  Each green line = one transfer. Rule: VALID must never wait for READY, otherwise both sides could wait forever.};
+
+% =====================================================================
+% (C) protocol family
+% =====================================================================
+\panel{0}{0.7}{19.0}{13.3}{The bus family: which one where}
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (0.3,12.55) {%
+  \renewcommand{\arraystretch}{1.2}%
+  \begin{tabular}{@{}p{2.3cm} p{4.6cm} p{10.8cm}@{}}
+    \toprule
+    \textbf{Bus} & \textbf{Used for} & \textbf{What is special}\\
+    \midrule
+    AXI4        & CPU, GPU, NPU, DMA $\leftrightarrow$ memory & 5 channels, bursts up to 256 beats, IDs, many requests in flight\\
+    AXI4-Lite   & control registers                           & 1 beat per request, 32 or 64 bit, no IDs: simple to build\\
+    AXI4-Stream & data streams (video, DSP chains)            & no address at all: TVALID, TREADY, TDATA, TLAST\\
+    APB         & slow peripherals (UART, I2C, timers)        & 2 phases (setup, access), one transfer at a time, very few gates (Figure 11)\\
+    ACE / CHI   & CPU clusters, coherent caches               & ACE adds snoop channels to AXI; CHI is packet based for big NoCs\\
+    Avalon-MM   & Intel FPGA (Platform Designer)              & read, write, waitrequest, readdatavalid (Figure 12)\\
+    \rn{mm\_regs} bus & your design                           & valid / ready, write data sent with the address, read data 1 cycle later\\
+                &                                             & $\Rightarrow$ like AXI-Lite with AW and W merged into one channel\\
+    \bottomrule
+  \end{tabular}};
+\node[note, anchor=north west, text width=18.2cm] at (0.3,6.9) {%
+  \textbf{Bridges} connect the families: an AXI $\rightarrow$ APB bridge lets the fast bus reach slow peripherals.
+  Your UART bridge is exactly this kind of block: it turns UART bytes into \rn{mm\_regs} bus requests.\\[4pt]
+  \textbf{Example system address map} (decided by the chip designers):\\[2pt]
+  \rn{0x0000\_0000} boot ROM $\cdot$ \rn{0x0010\_0000} on-chip SRAM $\cdot$ \rn{0x1000\_0000} peripherals (APB)
+  $\cdot$ \rn{0x2000\_0000} NPU registers $\cdot$ \rn{0x8000\_0000} DRAM.\\[2pt]
+  Your own map is the same idea in small: \rn{0x0000} registers, \rn{0x1000} A, \rn{0x2000} B, \rn{0x3000} C.};
+
+% =====================================================================
+% (D) crossbar
+% =====================================================================
+\panel{19.3}{0.7}{28.6}{13.3}{Crossbar: 3 managers $\times$ 3 subordinates}
+\foreach \nm [count=\k from 0] in {CPU, GPU, NPU}{
+  \node[cpu, fill=white, minimum width=1.4cm, minimum height=0.8cm, font=\tiny\bfseries] (m\k) at (20.3,{10.9-\k*2.2}) {\nm};
+  \node[comb, minimum width=1.2cm, minimum height=0.8cm, font=\tiny, text width=1.1cm] (d\k) at (22.1,{10.9-\k*2.2}) {address decode};
+  \draw[dat] (m\k) -- (d\k);}
+\foreach \nm [count=\k from 0] in {DRAM ctrl, SRAM, APB bridge}{
+  \node[mem, fill=white, minimum width=1.6cm, minimum height=0.8cm, font=\tiny\bfseries, text width=1.4cm] (s\k) at (27.5,{10.9-\k*2.2}) {\nm};
+  \node[comb, minimum width=1.25cm, minimum height=0.8cm, font=\tiny, text width=1.1cm] (a\k) at (25.6,{10.9-\k*2.2}) {arbiter + mux};
+  \draw[dat] (a\k) -- (s\k);}
+\foreach \i in {0,1,2}{\foreach \j in {0,1,2}{\draw[busd, thick] (d\i.east) -- (a\j.west);}}
+\node[note, font=\tiny, anchor=north west, text width=8.9cm] at (19.6,5.95) {%
+  The \textbf{decoder} compares the address with the map and picks the path. If two managers want the same subordinate
+  in one cycle, its \textbf{arbiter} picks one (round-robin or by priority / QoS); the other waits (READY = 0).\\[3pt]
+  All combinational logic plus a few registers for the arbiter state. Fine for a few blocks; for 20+ blocks the wires
+  explode $\Rightarrow$ network-on-chip.};
+
+% =====================================================================
+% (E) NoC router
+% =====================================================================
+\panel{28.9}{0.7}{38.3}{13.3}{Network-on-chip: routers and packets}
+\foreach \r in {0,1,2}{\foreach \c in {0,1,2}{
+  \node[draw=busd, fill=busf, thick, minimum size=0.55cm, font=\tiny\bfseries] (n\r\c) at ({29.9+\c*1.3},{11.6-\r*1.3}) {R};}}
+\foreach \r in {0,1,2}{\draw[busd, thick] (n\r0) -- (n\r1) -- (n\r2);}
+\foreach \c in {0,1,2}{\draw[busd, thick] (n0\c) -- (n1\c) -- (n2\c);}
+\node[note, font=\tiny, anchor=north west, text width=4.0cm] at (34.0,12.2) {%
+  3$\times$3 mesh: each block plugs into one router. A packet hops router to router (1--2 clocks per hop).};
+% router internals
+\node[anchor=north west, font=\scriptsize\bfseries] at (29.2,8.3) {inside one router (5 ports: N, S, E, W, local)};
+\foreach \p [count=\k from 0] in {N, S, E, W, local}{
+  \node[font=\tiny\bfseries, anchor=east] at (29.95,{7.55-\k*0.62}) {\p};
+  \ffrow{30.0}{7.4-\k*0.62}{4}{0.3}{ff=busd}}
+\node[lab, anchor=north] at (30.6,4.4) {input FIFOs (flit buffers = FF)};
+\node[comb, minimum width=1.5cm, minimum height=1.1cm, font=\tiny, text width=1.4cm] at (32.55,6.95) {route compute (XY)};
+\node[comb, minimum width=1.5cm, minimum height=1.1cm, font=\tiny, text width=1.4cm] at (32.55,5.55) {switch arbiter};
+\node[comb, minimum width=1.6cm, minimum height=2.6cm, font=\tiny, text width=1.4cm] at (34.55,6.25) {5$\times$5 crossbar};
+\foreach \k in {0,...,4}{\ffrow{35.55}{7.4-\k*0.62}{1}{0.3}{ff=busd}}
+\node[lab, anchor=north west, text width=2.2cm] at (35.95,7.65) {output register per port};
+\node[note, font=\tiny, anchor=north west, text width=8.9cm] at (29.2,3.85) {%
+  A packet is cut into \textbf{flits}: the head flit carries the destination, body flits carry data, the tail flit closes the path.
+  XY routing: go along X until the column matches, then along Y. Same handshake idea per link (valid / credit).};
+
+\figfoot{Signal names follow AMBA AXI4 / APB. Widths are one example configuration; the address map is an example.}
+\end{tikzpicture}
+\end{document}

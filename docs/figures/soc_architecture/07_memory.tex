@@ -1,0 +1,184 @@
+% 07_memory.tex -- DRAM controller, PHY, LPDDR chip, bank internals, timing, address map, bandwidth.
+% Build: tectonic 07_memory.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{7}{Memory system: DRAM controller, PHY and the LPDDR chip}
+  {DRAM is big and cheap but slow: every access must first open a row. The controller reorders requests to open as few
+   rows as possible; the PHY moves the bits at gigabit speed per pin.}
+
+% =====================================================================
+% (A) the path
+% =====================================================================
+\panel{0}{19.6}{38.3}{28.1}{From the NoC to a DRAM cell}
+% NoC ports
+\node[bus, minimum width=2.1cm, minimum height=6.4cm, text width=1.9cm, anchor=north west, font=\tiny] at (0.3,27.2)
+  {\textbf{4 AXI ports}\\from the NoC\\[3pt]CPU\\GPU\\NPU\\display};
+% front-end
+\draw[mem] (2.7,20.0) rectangle (12.4,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=memd] at (2.85,27.15) {controller front-end};
+\node[comb, minimum width=2.7cm, minimum height=2.3cm, text width=2.5cm, anchor=north west, font=\tiny] at (2.9,26.6)
+  {\textbf{port arbiter + QoS}\\display is real-time: it goes first, or the screen flickers};
+\node[anchor=north west, font=\tiny\bfseries] at (5.85,26.6) {read queue, 32 entries};
+\ffgrid{5.9}{26.25}{128}{16}{0.15}{ff=memd}
+\node[anchor=north west, font=\tiny\bfseries] at (5.85,24.85) {write queue, 32 entries};
+\ffgrid{5.9}{24.5}{128}{16}{0.15}{ff=memd}
+\node[lab, anchor=north west, text width=2.6cm] at (5.85,23.1) {(one square = 1 entry field) address, ID, age: flip-flops};
+\node[sram, minimum width=2.6cm, minimum height=0.7cm, anchor=north west, font=\tiny] at (5.85,22.2) {write data buffer (SRAM)};
+\node[comb, minimum width=3.3cm, minimum height=2.3cm, text width=3.1cm, anchor=north west, font=\tiny] at (8.95,26.6)
+  {\textbf{address mapper}\\physical address $\rightarrow$ channel, bank, row, column (panel D)};
+\node[note, font=\tiny, anchor=north west, text width=3.3cm] at (8.95,24.0) {%
+  Queues let the controller look at many requests and choose a good order instead of serving them one by one.};
+% back-end
+\draw[mem] (12.7,20.0) rectangle (24.6,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=memd] at (12.85,27.15) {controller back-end};
+\node[comb, minimum width=3.0cm, minimum height=2.3cm, text width=2.8cm, anchor=north west, font=\tiny] at (12.9,26.6)
+  {\textbf{scheduler} (FR-FCFS)\\1. requests to an open row first\\2. then the oldest\\+ an age limit so nobody starves};
+\node[anchor=north west, font=\tiny\bfseries] at (16.1,26.6) {16 bank state machines};
+\foreach \b in {0,...,15}{
+  \pgfmathtruncatemacro{\bc}{mod(\b,4)}\pgfmathtruncatemacro{\br}{div(\b,4)}
+  \node[mem, fill=white, minimum width=1.0cm, minimum height=0.55cm, inner sep=0pt, font=\tiny, anchor=north west]
+    at ({16.1+\bc*1.1},{26.2-\br*0.65}) {bank \b};}
+\node[lab, anchor=north west, text width=4.3cm] at (16.05,23.55) {each: state (idle / opening / open / closing) + open-row number register};
+\node[anchor=north west, font=\tiny\bfseries] at (20.65,26.6) {timing counters};
+\foreach \t [count=\k from 0] in {tRCD, tRP, tRAS, tWR, tFAW}{
+  \node[font=\tiny\ttfamily, anchor=west] at (20.65,{26.05-\k*0.42}) {\t};
+  \ffrow{21.55}{25.95-\k*0.42}{8}{0.18}{ff=memd}}
+\node[lab, anchor=north west, text width=3.8cm] at (20.6,23.85) {down-counters: a command may go only when its counter is 0};
+\node[comb, minimum width=3.7cm, minimum height=1.4cm, text width=3.5cm, anchor=north west, font=\tiny] at (20.7,22.95)
+  {\textbf{refresh timer}: every $\approx$3.9 $\mu$s send REF, so every row is refreshed within 32 ms};
+\node[comb, minimum width=7.6cm, minimum height=0.8cm, anchor=north west, font=\tiny] at (12.9,21.3)
+  {commands out: ACT, RD, WR, PRE, REF $\rightarrow$ DFI interface (standard controller $\leftrightarrow$ PHY)};
+% PHY
+\draw[hard] (24.9,20.0) rectangle (31.9,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=harde] at (25.05,27.15) {PHY (mixed analog / digital)};
+\foreach \nm/\tx [count=\k from 0] in {
+    serializer/{8 bits per pin per controller clock (800 MHz) $\rightarrow$ 6.4 Gb/s on the pin},
+    delay lines + training/{shift each data bit so it lines up with the strobe; tuned at boot},
+    {I/O drivers}/{push the signal down the board trace; on-die termination stops reflections}}{
+  \node[draw=harde, fill=white, rounded corners=3pt, minimum width=6.6cm, minimum height=1.55cm, text width=6.4cm, align=center,
+        anchor=north west, font=\tiny] at (25.1,{26.6-\k*1.95}) {\textbf{\nm}\\\tx};}
+% DRAM chip
+\draw[hard] (32.3,20.0) rectangle (38.0,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=harde] at (32.45,27.15) {LPDDR5 chip (off-chip)};
+\foreach \nm/\tx [count=\k from 0] in {
+    command decoder/{reads ACT / RD / PRE},
+    16 banks/{4 bank groups $\times$ 4},
+    {I/O}/{16 data pins + strobes per channel}}{
+  \node[draw=harde, fill=white, rounded corners=3pt, minimum width=5.3cm, minimum height=1.55cm, text width=5.1cm, align=center,
+        anchor=north west, font=\tiny] at (32.45,{26.6-\k*1.95}) {\textbf{\nm}\\\tx};}
+\draw[axi1] (2.4,24.0) -- (2.7,24.0);
+\draw[axi1] (12.4,24.0) -- (12.7,24.0);
+\draw[axi1] (24.6,24.0) -- (24.9,24.0);
+\draw[axi] (31.9,24.0) -- (32.3,24.0);
+
+% =====================================================================
+% (B) inside a DRAM bank
+% =====================================================================
+\panel{0}{0.7}{13.5}{19.3}{Inside one DRAM bank}
+% one cell
+\node[anchor=north west, font=\scriptsize\bfseries] at (0.3,18.6) {one cell = 1 transistor + 1 capacitor};
+\draw[pcb, thick] (1.6,18.0) -- (1.6,14.6);
+\node[lab, text=ink, anchor=north] at (1.6,14.55) {bitline (column)};
+\draw[pcb, thick] (0.6,17.4) -- (4.4,17.4);
+\node[lab, text=ink, anchor=south] at (3.7,17.42) {wordline (row)};
+\draw[pcb, thick] (1.6,16.4) -- (2.3,16.4);
+\draw[pcb, very thick] (2.3,16.15) -- (2.3,16.65);
+\draw[pcb, very thick] (2.45,16.15) -- (2.45,16.65);
+\draw[pcb, thick] (2.45,16.4) -- (3.2,16.4) -- (3.2,15.95);
+\draw[pcb, very thick] (2.9,15.95) -- (3.5,15.95);
+\draw[pcb, very thick] (2.9,15.75) -- (3.5,15.75);
+\draw[pcb, thick] (3.2,15.75) -- (3.2,15.4);
+\draw[pcb, thick] (2.95,15.4) -- (3.45,15.4) (3.05,15.3) -- (3.35,15.3) (3.15,15.2) -- (3.25,15.2);
+\draw[pcb, thick] (2.3,16.65) -- (2.3,17.4);
+\node[lab, text=ink, anchor=west] at (3.6,15.95) {capacitor};
+\node[lab, text=ink, anchor=west] at (3.6,15.65) {charge = 1 bit};
+\node[note, font=\scriptsize, anchor=north west, text width=4.6cm] at (0.3,14.15) {%
+  The charge leaks away in milliseconds, so every row must be refreshed. Reading also drains it, so the row is written back.
+  SRAM uses 6 transistors per bit and needs no refresh: faster but much bigger.};
+% bank array
+\node[anchor=north west, font=\scriptsize\bfseries] at (5.3,18.6) {bank = rows $\times$ columns of cells};
+\node[comb, minimum width=0.6cm, minimum height=5.0cm, anchor=north west, font=\tiny, text width=0.5cm, align=center] at (5.3,18.15)
+  {r\\o\\w\\[2pt]d\\e\\c};
+\foreach \r in {0,...,9}{\foreach \c in {0,...,13}{
+  \pgfmathsetmacro{\fillc}{\r==3 ? 1 : 0}
+  \ifdim\fillc pt>0.5pt \draw[medd, fill=medf] ({6.05+\c*0.5},{17.7-\r*0.5}) rectangle ++(0.42,0.42);
+  \else \draw[memd, fill=memf] ({6.05+\c*0.5},{17.7-\r*0.5}) rectangle ++(0.42,0.42); \fi}}
+\node[lab, text=medd, font=\tiny\bfseries, anchor=west] at (13.0,16.4) {$\leftarrow$};
+\node[comb, minimum width=7.0cm, minimum height=0.6cm, anchor=north west, font=\tiny] at (6.0,12.95)
+  {\textbf{sense amplifiers = row buffer}: holds one whole open row (2 KB)};
+\node[comb, minimum width=7.0cm, minimum height=0.6cm, anchor=north west, font=\tiny] at (6.0,12.2)
+  {\textbf{column mux}: picks 32 bytes = one burst};
+\draw[dat] (9.5,11.6) -- (9.5,11.1);
+\node[lab, text=ink, anchor=north] at (9.5,11.05) {to the 16 data pins, 16 beats};
+\node[note, anchor=north west, text width=12.8cm] at (0.3,10.3) {%
+  \textbf{1 ACT row}: the row decoder raises one wordline; the whole row flows into the sense amplifiers (time tRCD).\\[3pt]
+  \textbf{2 RD column}: the column mux picks 32 bytes from the open row; they reach the pins after the read latency,
+  as 16 beats of 16 bits.\\[3pt]
+  \textbf{3} More reads to the same open row are quick: a \textbf{row hit}.\\[3pt]
+  \textbf{4 PRE}: close the row (write it back) before another row of this bank can open (time tRP).\\[3pt]
+  \textbf{5 REF}: refresh rows regularly, or the data is lost.};
+
+% =====================================================================
+% (C) timing
+% =====================================================================
+\panel{13.8}{10.2}{38.3}{19.3}{Command timing on one bank (not to scale)}
+\renewcommand{\cw}{0.95}
+\wname{16.3}{17.6}{CK}  \wclk{16.3}{17.6}{22}
+\wname{16.3}{16.75}{CMD}
+\wbus{16.3}{16.75}{1}{2}{ACT} \widle{16.3}{16.75}{2}{6} \wbus{16.3}{16.75}{6}{7}{RD}
+\widle{16.3}{16.75}{7}{16} \wbus{16.3}{16.75}{16}{17}{PRE} \widle{16.3}{16.75}{17}{20} \wbus{16.3}{16.75}{20}{21}{ACT} \widle{16.3}{16.75}{0}{1}
+\wname{16.3}{15.9}{DQ}
+\widle{16.3}{15.9}{0}{11} \wbus{16.3}{15.9}{11}{15}{16 data beats} \widle{16.3}{15.9}{15}{22}
+\foreach \a/\b/\t in {1/6/tRCD, 6/11/read latency, 16/20/tRP}{
+  \draw[{Stealth[length=1.5mm]}-{Stealth[length=1.5mm]}, bad, thick] ({16.3+\a*\cw},15.35) -- ({16.3+\b*\cw},15.35);
+  \node[font=\tiny\bfseries, text=bad, anchor=north] at ({16.3+(\a+\b)*\cw/2},15.3) {\t};}
+\node[lab, text=ink, anchor=south] at ({16.3+1.5*\cw},17.25) {open row 0x1A2};
+\node[lab, text=ink, anchor=south] at ({16.3+6.5*\cw},17.25) {column 0x40};
+\node[lab, text=ink, anchor=south] at ({16.3+20.5*\cw},17.25) {next row};
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (14.1,14.4) {%
+  \renewcommand{\arraystretch}{1.15}%
+  \begin{tabular}{@{}l l l@{}}
+    \toprule
+    \textbf{Case} & \textbf{What must happen} & \textbf{DRAM time (typical)}\\
+    \midrule
+    row hit      & the row is already open: RD only               & read latency $\approx$15--20 ns\\
+    row closed   & ACT, then RD                                   & tRCD + latency $\approx$30--40 ns\\
+    row conflict & PRE the old row, ACT the new one, then RD      & tRP + tRCD + latency $\approx$45--60 ns\\
+    \bottomrule
+  \end{tabular}};
+\node[note, anchor=north west, text width=7.9cm] at (30.2,14.4) {%
+  Add the controller queues, PHY and NoC and a CPU sees $\approx$100 ns for a DRAM read.\\[3pt]
+  That is why the scheduler prefers row hits, and why reading memory in order (like the NPU's DMA bursts)
+  is much faster than jumping around.};
+
+% =====================================================================
+% (D) address mapping + bandwidth
+% =====================================================================
+\panel{13.8}{0.7}{38.3}{9.9}{Address mapping and bandwidth}
+\node[anchor=west, font=\scriptsize\bfseries] at (14.1,8.8) {example physical address split (4 channels, 16 banks, 2 KB rows, 32-byte bursts):};
+\foreach \nm/\bits/\w/\col [count=\k from 0] in {row/{[33:17]}/6.0/cpuf, bank/{[16:13]}/2.2/pwrf, column/{[12:7]}/2.6/memf, channel/{[6:5]}/1.8/gpuf, byte/{[4:0]}/2.2/medf}{
+  \ifnum\k=0 \xdef\ax{14.1}\fi
+  \node[draw=pcb, fill=\col, minimum width=\w cm, minimum height=0.7cm, anchor=north west, inner sep=0pt, font=\tiny, align=center]
+    at (\ax,8.35) {\textbf{\nm} \bits};
+  \pgfmathsetmacro{\nx}{\ax+\w}\xdef\ax{\nx}}
+\node[note, font=\tiny, anchor=north west, text width=9.0cm] at (29.2,8.4) {%
+  Channel bits sit low, so neighbouring 32-byte pieces go to different channels and all 4 work at once.
+  Real controllers also XOR some bits to spread traffic.};
+\node[note, anchor=north west, text width=11.8cm] at (14.1,7.25) {%
+  \textbf{Bandwidth} = transfers per second $\times$ bus width\\[2pt]
+  LPDDR5-6400: 6,400 M/s $\times$ 16 bit = 102.4 Gb/s = \textbf{12.8 GB/s per channel}\\
+  4 channels $\Rightarrow$ \textbf{51.2 GB/s} peak (real traffic gets less).\\[4pt]
+  DE10-Lite: 64 MB SDRAM, 16 bit, single data rate. At 100 MHz: 16 bit $\times$ 100 M = \textbf{200 MB/s}.};
+\node[note, anchor=north west, text width=11.8cm] at (26.2,7.25) {%
+  \textbf{Why an NPU needs on-chip SRAM}\\[2pt]
+  32$\times$32 MACs at 1 GHz, each needing 2 new bytes: 2,048 B per clock = \textbf{2 TB/s}.\\
+  The systolic array reuses each value along a whole row or column: only 64 B per clock = \textbf{64 GB/s}.\\
+  Still more than 51 GB/s $\Rightarrow$ tiles stay in SRAM and are reused many times (Figure 5).
+  Your 4$\times$4 array uses every A and B value in 4 PEs.};
+
+\figfoot{LPDDR5 numbers are typical; exact timings depend on the speed grade. The address split is an example; each controller chooses its own.}
+\end{tikzpicture}
+\end{document}

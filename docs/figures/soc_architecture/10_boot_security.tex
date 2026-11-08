@@ -1,0 +1,135 @@
+% 10_boot_security.tex -- secure boot chain, signature check, TrustZone, security blocks, JTAG debug, FPGA configuration.
+% Build: tectonic 10_boot_security.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{10}{Boot, security and debug: from power-on to the operating system}
+  {A chip must start from code nobody can change, prove that every next piece of software is genuine,
+   keep secrets away from normal apps, and still let engineers look inside.}
+
+% =====================================================================
+% (A) boot chain
+% =====================================================================
+\panel{0}{19.4}{38.3}{28.1}{Secure boot: a chain of trust}
+\foreach \nm/\tx/\where/\sty [count=\k from 0] in {
+    power-on/{PMIC raises the supply rails in order; reset is held until they are stable and the PLL is locked}/{--}/pwr,
+    boot ROM/{CPU 0 starts at the reset vector in mask ROM (cannot be changed); reads boot pins + fuses}/{ROM}/sec,
+    load BL1/{copy the first-stage loader from UFS / eMMC / SPI flash into on-chip SRAM (DRAM does not work yet)}/{ROM $\rightarrow$ SRAM}/sec,
+    verify BL1/{hash + signature check against the key hash in the OTP fuses; bad $\Rightarrow$ stop or recovery mode}/{ROM}/sec,
+    BL1 runs/{sets up clocks, trains the DRAM PHY (Figure 7): now DRAM can be used}/{SRAM}/mem,
+    secure firmware/{load + verify the secure monitor (e.g. Trusted Firmware) and the TEE OS into secure DRAM}/{DRAM, secure}/sec,
+    OS loader/{load + verify U-Boot / UEFI, then the Linux kernel + device tree}/{DRAM}/cpu,
+    kernel + drivers/{drivers start; the NPU driver loads NPU firmware and requests its IRQ; apps start}/{DRAM}/cpu}{
+  \pgfmathsetmacro{\x}{0.35+\k*4.7}
+  \node[\sty, fill=white, minimum width=4.35cm, minimum height=4.6cm, text width=4.1cm, anchor=north west, font=\footnotesize, align=center]
+    (b\k) at (\x,27.3) {\textbf{\k\ \nm}\\[4pt]\tx};
+  \node[font=\tiny, text=muted, anchor=north] at ({\x+2.17},22.6) {runs from: \where};}
+\foreach \k [evaluate=\k as \n using int(\k+1)] in {0,...,6}{\draw[dat] (b\k.east) -- (b\n.west);}
+\draw[-{Stealth[length=2mm]}, thick, secd, bend right=6] ($(b1.south)+(0.6,-0.45)$) to ($(b4.south)+(-0.6,-0.45)$);
+\foreach \k/\n in {4/5, 5/6, 6/7}{
+  \draw[-{Stealth[length=2mm]}, thick, secd, bend right=15] ($(b\k.south)+(0.6,-0.45)$) to ($(b\n.south)+(-0.6,-0.45)$);}
+\node[note, font=\small, anchor=north west, text width=37.6cm] at (0.35,21.2) {%
+  \textcolor{secd}{\textbf{Red arrows}}: each stage checks the signature of the next one \textbf{before} jumping to it. The first link (the ROM and the key hash in the fuses)
+  is fixed in silicon, so an attacker who changes the flash cannot run their own code. This is the \textbf{chain of trust}.};
+
+% =====================================================================
+% (B) signature check
+% =====================================================================
+\panel{0}{9.6}{12.6}{19.0}{How ``verify'' works}
+\node[draw=pcb, fill=white, rounded corners=3pt, minimum width=3.6cm, minimum height=2.2cm, text width=3.4cm, align=center, font=\tiny, anchor=north west]
+  (img) at (0.35,18.2) {\textbf{image in flash}\\[2pt]BL1 code\\+ public key\\+ signature};
+\node[comb, minimum width=3.0cm, minimum height=1.0cm, text width=2.8cm, font=\tiny] (sha) at (6.0,17.6) {\textbf{SHA-256 engine}\\code $\rightarrow$ 256-bit digest};
+\node[comb, minimum width=3.0cm, minimum height=1.0cm, text width=2.8cm, font=\tiny] (kh) at (6.0,16.1) {\textbf{hash of public key}\\$=$ value in OTP fuses?};
+\node[comb, minimum width=3.0cm, minimum height=1.0cm, text width=2.8cm, font=\tiny] (sig) at (9.9,16.85) {\textbf{signature check}\\(ECDSA / RSA) with the key};
+\draw[dat] (img.east |- sha) -- (sha); \draw[dat] (img.east |- kh) -- (kh);
+\draw[dat] (sha.east) -- (sig.west |- sha.east); \draw[dat] (kh.east) -- (sig.west |- kh.east);
+\node[good, draw=good, fill=good!15, rounded corners=3pt, font=\tiny\bfseries, text=good] at (8.3,14.4) {all match: jump to BL1};
+\node[draw=bad, fill=bad!15, rounded corners=3pt, font=\tiny\bfseries, text=bad] at (11.1,14.4) {else: stop};
+\draw[dat] (sig.south) -- (9.9,15.0) -| (8.3,14.65); \draw[dat] (9.9,15.0) -| (11.1,14.65);
+\node[anchor=north west, font=\tiny\bfseries] at (0.35,13.6) {SHA-256 state = 8 registers $\times$ 32 bit:};
+\ffgrid{0.4}{13.2}{256}{64}{0.14}{ff=secd}
+\node[note, anchor=north west, text width=11.9cm] at (0.35,12.45) {%
+  The hash engine is a datapath like your PE: 256 FF of state, plus adders, rotations and XORs between them, 64 rounds per 64-byte block.
+  Changing one bit of the code changes the whole digest, so the signature no longer matches.\\[3pt]
+  Only the private key (kept by the chip vendor, never on the chip) can make a valid signature.};
+
+% =====================================================================
+% (C) TrustZone
+% =====================================================================
+\panel{12.9}{9.6}{25.4}{19.0}{TrustZone: two worlds on one CPU}
+\node[cpu, minimum width=5.5cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (13.2,17.7) {EL0: apps};
+\node[cpu, minimum width=5.5cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (13.2,16.75) {EL1: Linux / Android kernel};
+\node[cpu, minimum width=5.5cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (13.2,15.8) {EL2: hypervisor (optional)};
+\node[sec, minimum width=5.5cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (19.5,17.7) {S-EL0: trusted apps (keys, payments, face data)};
+\node[sec, minimum width=5.5cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (19.5,16.75) {S-EL1: TEE OS};
+\node[sec, minimum width=11.8cm, minimum height=0.85cm, anchor=north west, font=\tiny] at (13.2,14.8) {EL3: secure monitor: switches worlds when software executes an SMC instruction};
+\node[font=\scriptsize\bfseries, text=cpud] at (15.95,18.0) {normal world};
+\node[font=\scriptsize\bfseries, text=secd] at (22.25,18.0) {secure world};
+\node[note, anchor=north west, text width=11.9cm] at (13.2,13.7) {%
+  \textbf{Hardware does the separation}: every bus transfer carries an \textbf{NS bit} (non-secure; AxPROT[1] on AXI).\\[2pt]
+  $\bullet$ \textbf{TZASC} sits in front of DRAM and blocks NS = 1 accesses to secure regions.\\
+  $\bullet$ \textbf{TZPC} marks peripherals (crypto engine, fingerprint sensor) as secure-only.\\
+  $\bullet$ Even a hacked Linux kernel cannot read secure memory: the bus returns an error.\\[3pt]
+  An NPU can also be put in secure mode, e.g. to compare a face with a template kept in secure memory.};
+
+% =====================================================================
+% (D) security blocks
+% =====================================================================
+\panel{25.7}{9.6}{38.3}{19.0}{Security blocks on the die}
+\foreach \nm/\tx [count=\k from 0] in {
+    OTP fuses/{one-time programmable bits blown at the factory: root-key hash, device ID, ``debug off'', anti-rollback counter},
+    crypto engine/{AES for bulk encryption, SHA for hashes, a big-number unit (PKA) for RSA / ECC},
+    TRNG/{true random numbers: free-running ring oscillators jitter; the noise is sampled and cleaned by a hash},
+    key store/{keys are used inside the crypto engine and never appear on the normal bus}}{
+  \node[sec, fill=white, minimum width=12.0cm, minimum height=1.5cm, text width=11.7cm, anchor=north west, font=\scriptsize, align=left]
+    at (26.0,{18.2-\k*1.75}) {\textbf{\nm}: \tx};}
+\node[note, anchor=north west, text width=12.0cm] at (26.0,11.1) {%
+  Attackers also measure power or inject glitches; secure blocks add noise, redundancy and sensors against that.};
+
+% =====================================================================
+% (E) debug
+% =====================================================================
+\panel{0}{0.7}{25.4}{9.3}{Debug: JTAG and the boundary-scan chain}
+\node[per, fill=white, minimum width=3.0cm, minimum height=3.6cm, text width=2.8cm, anchor=north west, font=\tiny] (tap) at (0.35,8.5)
+  {\textbf{TAP controller}\\16-state FSM\\driven by TMS\\[4pt]pins:\\TCK clock\\TMS mode\\TDI data in\\TDO data out};
+\node[per, fill=white, minimum width=3.2cm, minimum height=0.8cm, font=\tiny, anchor=north west] at (3.7,8.5) {instruction register};
+\node[per, fill=white, minimum width=3.2cm, minimum height=0.8cm, font=\tiny, anchor=north west] at (3.7,7.55) {IDCODE (32 bit)};
+\node[per, fill=white, minimum width=3.2cm, minimum height=0.8cm, font=\tiny, anchor=north west] at (3.7,6.6) {BYPASS (1 bit)};
+\node[per, fill=white, minimum width=3.2cm, minimum height=0.8cm, font=\tiny, anchor=north west] at (3.7,5.65) {debug port $\rightarrow$ CPU};
+% chip with boundary scan ring
+\draw[pcb, thick, rounded corners=3pt] (8.6,1.5) rectangle (15.6,8.5);
+\node[font=\tiny, text=muted] at (12.1,5.0) {chip core};
+\foreach \k in {0,...,9}{\draw[ff=prd] ({9.1+\k*0.6},7.9) rectangle ++(0.4,0.4);}
+\foreach \k in {0,...,8}{\draw[ff=prd] (15.0,{7.3-\k*0.6}) rectangle ++(0.4,0.4);}
+\foreach \k in {0,...,9}{\draw[ff=prd] ({14.5-\k*0.6},1.7) rectangle ++(0.4,0.4);}
+\foreach \k in {0,...,8}{\draw[ff=prd] (8.8,{2.3+\k*0.6}) rectangle ++(0.4,0.4);}
+\draw[dat] (7.4,8.1) -- (9.1,8.1);
+\node[lab, text=ink, anchor=south] at (8.0,8.1) {TDI};
+\draw[dat] (9.0,6.8) -- (7.4,6.8);
+\node[lab, text=ink, anchor=south] at (8.0,6.8) {TDO};
+\node[lab, text=ink, anchor=north, text width=6.6cm, align=center] at (12.1,1.4) {one scan flip-flop next to every pin, chained into a ring};
+\node[note, anchor=north west, text width=9.3cm] at (15.9,8.5) {%
+  \textbf{Boundary scan}: shift a pattern in on TDI, and the scan flip-flops drive the pins; capture what comes back and shift it
+  out on TDO. That tests the solder joints on the board without running any software.\\[3pt]
+  \textbf{Debug}: through the debug port a PC can halt a CPU core, single-step it, set breakpoints and read registers.
+  Trace units record which instructions ran.\\[3pt]
+  \textbf{In products}: a fuse turns debug off, or allows it only after a signed unlock.};
+
+% =====================================================================
+% (F) your FPGA
+% =====================================================================
+\panel{25.7}{0.7}{38.3}{9.3}{Your MAX 10: ``boot'' = configuration}
+\node[note, anchor=north west, text width=12.0cm] at (26.0,8.5) {%
+  An FPGA has no boot ROM program. At power-on it \textbf{loads its configuration}: the bits that set every LUT, flip-flop and wire.\\[4pt]
+  $\bullet$ \textbf{.sof} through the USB-Blaster (JTAG, the same TAP as on the left) goes into configuration SRAM.
+  Fast for testing; lost when the power goes off.\\[2pt]
+  $\bullet$ \textbf{.pof} is written into the MAX 10's internal configuration flash. At every power-on the chip configures itself
+  from it (``instant-on''); it can even hold two images.\\[4pt]
+  $\bullet$ The same JTAG port is what SignalTap (Quartus' on-chip logic analyser) uses to watch your signals while the design runs.\\[4pt]
+  Real SoCs add the security steps above; FPGAs can encrypt and authenticate the bitstream too (higher-end families).};
+
+\figfoot{Boot stage names follow the common Arm flow (ROM, BL1, BL2 / TF-A, TEE, U-Boot, Linux). Exact stages differ between vendors.}
+\end{tikzpicture}
+\end{document}
