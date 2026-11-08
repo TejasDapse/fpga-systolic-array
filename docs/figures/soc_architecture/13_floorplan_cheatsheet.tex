@@ -1,0 +1,102 @@
+% 13_floorplan_cheatsheet.tex -- illustrative die floorplan, cheat sheet of every block, link back to mm_core.
+% Build: tectonic 13_floorplan_cheatsheet.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{13}{Putting it together: a die floorplan and a one-page cheat sheet}
+  {Where the blocks could sit on the silicon (illustrative, not any real chip), and every block of Figures 1--12 in one table.}
+
+% =====================================================================
+% (A) floorplan
+% =====================================================================
+\panel{0}{12.0}{14.6}{28.1}{An illustrative die floorplan}
+\draw[pcb, line width=1.5pt, fill=white] (0.5,12.5) rectangle (14.1,27.3);
+\foreach \k in {0,...,26}{\fill[muted!40] ({0.62+\k*0.5},27.0) rectangle ++(0.3,0.2); \fill[muted!40] ({0.62+\k*0.5},12.6) rectangle ++(0.3,0.2);}
+\foreach \k in {0,...,28}{\fill[muted!40] (0.6,{12.95+\k*0.5}) rectangle ++(0.2,0.3); \fill[muted!40] (13.8,{12.95+\k*0.5}) rectangle ++(0.2,0.3);}
+\node[hard, minimum width=0.75cm, minimum height=13.4cm, anchor=south west, font=\tiny, text width=0.5cm] at (0.95,13.2) {L\\P\\D\\D\\R\\[3pt]P\\H\\Y};
+\node[cpu, minimum width=1.35cm, minimum height=2.6cm, anchor=south west, font=\tiny, text width=1.1cm, inner sep=1pt] at (1.9,23.9) {big core 0};
+\node[cpu, minimum width=1.35cm, minimum height=2.6cm, anchor=south west, font=\tiny, text width=1.1cm, inner sep=1pt] at (3.35,23.9) {big core 1};
+\foreach \k in {0,1,2,3}{
+  \pgfmathtruncatemacro{\cc}{mod(\k,2)}\pgfmathtruncatemacro{\rr}{div(\k,2)}
+  \node[cpu, minimum width=1.35cm, minimum height=1.05cm, anchor=south west, font=\tiny, inner sep=1pt] at ({1.9+\cc*1.45},{22.75-\rr*1.15}) {little \k};}
+\node[sram, minimum width=1.6cm, minimum height=5.95cm, anchor=south west, font=\tiny, text width=1.3cm] at (4.9,20.55) {L3 / SLC\\cache};
+\node[gpu, minimum width=6.9cm, minimum height=5.95cm, anchor=south west, font=\scriptsize] at (6.65,20.55) {\textbf{GPU}\\16 shader cores};
+\node[mem, minimum width=4.6cm, minimum height=1.25cm, anchor=south west, font=\tiny] at (1.9,19.15) {DRAM controller};
+\node[npu, minimum width=4.0cm, minimum height=3.85cm, anchor=south west, font=\scriptsize] at (6.65,16.55) {\textbf{NPU}};
+\node[med, minimum width=2.75cm, minimum height=1.85cm, anchor=south west, font=\tiny] at (10.8,18.55) {ISP};
+\node[med, minimum width=2.75cm, minimum height=1.85cm, anchor=south west, font=\tiny] at (10.8,16.55) {video codec};
+\node[med, minimum width=2.2cm, minimum height=2.3cm, anchor=south west, font=\tiny] at (1.9,16.7) {DSP};
+\node[med, minimum width=2.25cm, minimum height=2.3cm, anchor=south west, font=\tiny] at (4.25,16.7) {display};
+\node[sec, minimum width=2.2cm, minimum height=3.0cm, anchor=south west, font=\tiny, text width=1.9cm] at (1.9,13.5) {boot ROM\\security};
+\node[pwr, minimum width=2.25cm, minimum height=3.0cm, anchor=south west, font=\tiny, text width=1.9cm] at (4.25,13.5) {PMU\\PLLs};
+\node[per, minimum width=6.9cm, minimum height=2.85cm, anchor=south west, font=\tiny, text width=6.6cm] at (6.65,13.5)
+  {peripherals $\cdot$ USB / PCIe / UFS / MIPI PHYs\\(analog PHYs sit near the pins)};
+\draw[busd, line width=1.6pt, opacity=0.8] (6.58,13.4) -- (6.58,26.6) (1.85,20.48) -- (13.6,20.48) (1.85,16.5) -- (13.6,16.5);
+\node[font=\tiny\bfseries, text=busd, fill=white, inner sep=1pt] at (9.0,20.48) {NoC wires};
+
+% =====================================================================
+% (B) same building blocks everywhere
+% =====================================================================
+\panel{0}{0.7}{14.6}{11.7}{Everything is built from what you already know}
+\node[note, font=\small, anchor=north west, text width=13.9cm] at (0.35,10.95) {%
+  Every block on the left is \textbf{flip-flops + combinational logic + SRAM (+ a few analog blocks)}: exactly the
+  three ingredients of your \rn{mm\_core}. The floorplan is illustrative: GPU, CPU and caches take most of the area;
+  PHYs sit at the edge next to their pins; hot blocks are spread apart. Your whole 4$\times$4 core ($\approx$1,020 FF)
+  is smaller than one little CPU core.\\[5pt]
+  \textbf{Your RTL $\rightarrow$ where the same idea lives in an SoC}\\[2pt]
+  \rn{pe.sv} $\rightarrow$ NPU / GPU matrix units $\cdot$ \rn{skew\_buffer.sv} $\rightarrow$ NPU feeders\\
+  \rn{sram\_sp.sv} banks $\rightarrow$ every SRAM buffer $\cdot$ \rn{mm\_regs.sv} $\rightarrow$ the registers of every block\\
+  \rn{mm\_controller.sv} $\rightarrow$ DMA, command processor, bridge FSMs $\cdot$ \rn{sync\_2ff.sv} $\rightarrow$ CDC\\
+  \rn{uart\_rx/tx.sv} $\rightarrow$ peripherals $\cdot$ \rn{uart\_bus\_bridge.sv} $\rightarrow$ bus bridges\\[5pt]
+  \textbf{3-sentence pitch}: ``I built the compute core of an NPU: a 4$\times$4 output-stationary systolic array with its register
+  interface, banked RAMs, skew buffers and control FSM, checked against a golden model. In an SoC it would sit behind an AXI-Lite
+  register port and a DMA, raise an interrupt when done, and requantize int32 results to int8. My next step is a RISC-V soft CPU on
+  the same FPGA bus, replacing the UART path.''};
+
+% =====================================================================
+% (C) cheat sheet
+% =====================================================================
+\panel{14.9}{0.7}{38.3}{28.1}{Cheat sheet: every block in one line}
+\node[anchor=north west, font=\footnotesize, inner sep=0pt] at (15.15,27.4) {%
+  \setlength{\tabcolsep}{4pt}%
+  \renewcommand{\arraystretch}{1.42}%
+  \begin{tabular}{@{}L{2.6cm} L{3.2cm} L{4.9cm} L{3.7cm} L{6.9cm}@{}}
+    \toprule
+    \textbf{Block (figure)} & \textbf{Job} & \textbf{Built from} & \textbf{Key number} & \textbf{Interview one-liner}\\
+    \midrule
+    CPU core (2)        & runs any code             & pipeline registers, ALU, register file, hazard + forwarding logic & 5 stages; 395 FF of pipeline registers (example) & Forwarding removes most data stalls; a load followed by its user costs 1 cycle.\\
+    Caches (3)          & keep recent data close    & SRAM tag + data arrays, 1 comparator per way          & 32 KB, 4-way: tag 19 / index 7 / offset 6 & A hit reads all ways at once and compares the tags in parallel.\\
+    MMU / TLB (3)       & virtual $\rightarrow$ physical & flip-flop CAM + page-walk FSM                   & 4 KB pages, 2-level walk (Sv32) & TLB miss = hardware walk; invalid entry = page fault for the OS.\\
+    Coherence (3)       & one value in every cache  & 2 state bits per line + snoop filter                   & MESI & A write first invalidates every other copy.\\
+    GPU (4)             & many threads, one instruction & SIMT lanes, big SRAM register file, warp schedulers & warp = 32 threads & Latency is hidden by switching warps; divergence costs time.\\
+    NPU (5)             & matrix math for AI        & systolic MAC array, SRAM ping-pong, DMA, post-processing & 32$\times$32 int8 at 1 GHz $\approx$ 2 TOPS & Ping-pong keeps the array busy; requantize int32 $\rightarrow$ int8 with M0 and a shift.\\
+    AXI / APB (6)       & move data between blocks  & VALID / READY channels, decoders, arbiters             & AXI4 port $\approx$400 wires & A transfer happens when VALID and READY are both 1; VALID must not wait for READY.\\
+    NoC (6)             & scale the wiring          & routers: input FIFOs, arbiter, crossbar                & packets $\rightarrow$ flits & Crossbars stop scaling; a mesh of routers does not.\\
+    DRAM (7)            & big main memory           & controller queues, bank FSMs, timing counters, PHY     & LPDDR5 4 $\times$ 16 bit $\approx$ 51 GB/s & Row hit $<$ row closed $<$ row conflict; the scheduler prefers row hits.\\
+    DMA (8)             & copy without the CPU      & descriptor registers, address generators, FIFOs        & 2-D strides & A list of descriptors in DRAM; one doorbell write starts it.\\
+    Interrupts (8)      & tell the CPU ``done''     & sticky FF, mask, OR, GIC priority logic                & level IRQ, write 1 to clear & Clean caches before the NPU reads; invalidate after it writes.\\
+    Clocks, DVFS (9)    & make and gate clocks      & PLL, clock tree, ICG cells, PMU                        & $P = \alpha C V^2 f$ & Lower V and f together: energy per operation $\propto V^2$.\\
+    Power domains (9)   & remove leakage            & power switches, isolation, retention FFs               & off / on sequence & Isolate the outputs before the power goes off.\\
+    CDC, reset (9)      & cross clocks safely       & 2-FF synchronizers, async FIFO, reset synchronizer     & Gray code & Never synchronize a binary count bit by bit.\\
+    Boot, security (10) & start safe, keep secrets  & ROM, OTP fuses, crypto engine, TRNG, TrustZone         & chain of trust & Each stage verifies the next one before running it.\\
+    Debug (10)          & look inside               & JTAG TAP, boundary-scan chain, debug port              & 4--5 pins & Boundary scan tests board pins without any software.\\
+    Peripherals (11)    & talk to the outside       & registers + shift register or counter on APB           & UART: 434 clocks per bit & APB = setup + access phase; PREADY = 0 stretches it.\\
+    Mini SoC (12)       & your next build           & RISC-V + Avalon-MM + \rn{mm\_core} wrapper             & $\approx$1,000$\times$ less overhead (est.) & The wrapper maps Avalon signals 1:1 onto the \rn{mm\_regs} bus; watch the byte lanes.\\
+    \bottomrule
+  \end{tabular}};
+
+\node[note, font=\small, anchor=north west, text width=22.8cm] at (15.15,6.75) {%
+  \textbf{Five questions to practise out loud}\\[3pt]
+  \textbf{1} How would you connect your accelerator to a CPU inside an SoC? (AXI-Lite registers, DMA, IRQ: Figures 5, 8)\\[2pt]
+  \textbf{2} Why does an NPU need large on-chip SRAM when DRAM is so big? (bandwidth: Figure 7)\\[2pt]
+  \textbf{3} What exactly happens between writing CTRL.START and the CPU reading the result? (Figure 8)\\[2pt]
+  \textbf{4} What is the VALID / READY rule, and what is back-pressure? (Figure 6)\\[2pt]
+  \textbf{5} How do you pass a signal safely from one clock domain to another? (Figure 9)};
+
+\figfoot{The floorplan is a teaching sketch, not the layout of any real product. Numbers in the table repeat the examples of Figures 2--12.}
+\end{tikzpicture}
+\end{document}

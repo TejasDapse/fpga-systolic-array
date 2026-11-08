@@ -1,0 +1,225 @@
+% 05_npu.tex -- a full NPU around a 32x32 systolic array, mapped against mm_core.
+% Build: tectonic 05_npu.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\newcommand{\nreg}[3]{% y name bits : one host-interface register row
+  \node[anchor=west, font=\scriptsize\ttfamily, inner sep=0pt] at (0.55,#1+0.07) {#2};
+  \ffrow{3.55}{#1}{#3}{0.14}{ff=npud}}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{5}{NPU: a full neural accelerator around a systolic array like yours}
+  {Everything your \rn{mm\_core} has (registers, RAM banks, skew buffers, MAC array, FSM) plus what a product needs:
+   DMA, a command processor, big SRAM, post-processing and an interrupt.}
+
+\draw[panel] (0,12.4) rectangle (38.3,28.1);
+\node[ptitle] at (0.3,27.85) {Datapath of one NPU (example: 32$\times$32 int8 array at 1 GHz)};
+
+% =====================================================================
+% host interface registers
+% =====================================================================
+\draw[npu, fill=white] (0.3,19.6) rectangle (8.45,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=npud] at (0.45,27.15) {host interface (AXI-Lite subordinate)};
+\node[anchor=north west, font=\tiny, text=muted] at (0.45,26.75) {the CPU reads / writes these; 7 registers $\cdot$ 92 FF};
+\nreg{25.85}{CTRL}{2}         \node[lab, anchor=west] at (3.95,25.92) {START, SOFT\_RESET};
+\nreg{25.2}{STATUS}{2}        \node[lab, anchor=west] at (3.95,25.27) {BUSY, DONE};
+\nreg{24.55}{IRQ\_MASK}{4}    \node[lab, anchor=west] at (4.25,24.62) {which events may interrupt};
+\nreg{23.9}{IRQ\_STATUS}{4}   \node[lab, anchor=west] at (4.25,23.97) {sticky; write 1 to clear};
+\nreg{23.25}{CMD\_BASE}{32}
+\node[lab, anchor=north west] at (3.5,23.2) {DRAM address of the command list};
+\nreg{22.35}{CMD\_COUNT}{16}  \node[lab, anchor=west] at (5.85,22.42) {number of layers};
+\nreg{21.7}{PERF\_CYCLES}{32}
+\node[comb, minimum width=7.75cm, minimum height=0.85cm, anchor=south west, font=\tiny, text width=7.5cm] at (0.5,19.8)
+  {\textbf{irq} = OR( IRQ\_STATUS AND IRQ\_MASK ) $\rightarrow$ one wire to the GIC (Figure 8)};
+\draw[irq] (0.5,20.22) -- (0.15,20.22) -- (0.15,19.1);
+\node[font=\tiny\bfseries, text=bad, anchor=west] at (0.2,19.35) {IRQ};
+
+% =====================================================================
+% command processor
+% =====================================================================
+\draw[npu, fill=white] (0.3,12.7) rectangle (8.45,19.2);
+\node[anchor=north west, font=\scriptsize\bfseries, text=npud] at (0.6,19.05) {command processor (sequencer FSM)};
+\node[note, font=\tiny, anchor=north west, text width=7.7cm] at (0.5,18.55) {%
+  \textbf{1} reads the command list at CMD\_BASE (through the DMA)\\
+  \textbf{2} loads one layer descriptor into registers:\\
+  \hspace*{1em}op, input / weight / output address, M, N, K, M0, shift, zero point\\
+  \textbf{3} cuts the layer into 32$\times$32 tiles; starts DMA, array and post-processing in order\\
+  \textbf{4} after the last tile: STATUS.DONE = 1, IRQ\_STATUS.done = 1};
+\ffgrid{0.7}{15.75}{200}{50}{0.14}{ff=npud}
+\node[lab, anchor=north west] at (0.6,15.15) {descriptor registers $\approx$200 FF (one row of squares = 50 FF)};
+\node[comb, minimum width=7.75cm, minimum height=0.75cm, anchor=south west, font=\tiny] at (0.5,13.0)
+  {tile counters + compare logic $\rightarrow$ start / done pulses};
+
+% =====================================================================
+% DMA
+% =====================================================================
+\draw[bus] (8.85,12.7) rectangle (14.0,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=busd] at (9.0,27.15) {DMA engine};
+\draw[axi] (11.4,26.75) -- (11.4,25.85);
+\node[lab, text=ink, anchor=west, text width=2.4cm] at (11.6,26.3) {AXI4 manager 128 bit $\leftrightarrow$ NoC $\leftrightarrow$ DRAM};
+\node[per, fill=white, minimum width=4.8cm, minimum height=1.4cm, anchor=north west, font=\tiny, text width=4.6cm] at (9.0,25.6)
+  {\textbf{read address generator}\\base, row stride, row length, row count\\(counters + adders, $\approx$100 FF)};
+\node[anchor=north west, font=\tiny\bfseries] at (9.05,23.95) {read FIFO 8 $\times$ 128 bit};
+\foreach \e in {0,...,7}{\ffrow{9.1}{23.45-\e*0.19}{32}{0.145}{ff=busd}}
+\node[lab, anchor=north west, text width=4.6cm] at (9.05,21.9) {(one square = 4 FF here) small FIFOs are flip-flops; big ones are SRAM};
+\node[per, fill=white, minimum width=4.8cm, minimum height=1.4cm, anchor=north west, font=\tiny, text width=4.6cm] at (9.0,20.6)
+  {\textbf{write address generator}\\same counters for the output tensor};
+\node[anchor=north west, font=\tiny\bfseries] at (9.05,18.95) {write FIFO 8 $\times$ 128 bit};
+\foreach \e in {0,...,7}{\ffrow{9.1}{18.45-\e*0.19}{32}{0.145}{ff=busd}}
+\node[note, font=\tiny, anchor=north west, text width=4.6cm] at (9.05,16.7) {%
+  The DMA is what replaces your \rn{host.py} + UART: it moves whole tiles with bursts while the CPU does other work.};
+
+% =====================================================================
+% SRAM, feeders, array
+% =====================================================================
+\node[sram, minimum width=11.5cm, minimum height=2.3cm, anchor=south west] (wsr) at (14.4,25.0) {};
+\draw[memd, thick] (20.15,25.0) -- (20.15,27.3);
+\node[font=\scriptsize, align=center] at (17.27,26.15) {\textbf{weight SRAM: ping}\\256 KB};
+\node[font=\scriptsize, align=center] at (23.0,26.15) {\textbf{weight SRAM: pong}\\256 KB};
+\draw[axi1] (14.0,26.1) -- (14.4,26.1);
+\node[sram, minimum width=2.0cm, minimum height=7.0cm, anchor=south west, text width=1.8cm, font=\tiny] (isr) at (14.4,14.8)
+  {\textbf{input}\\\textbf{SRAM}\\[2pt]ping 256 KB\\[2pt]pong 256 KB};
+\draw[axi1] (14.0,18.3) -- (14.4,18.3);
+% B feeder: column c waits c cycles
+\foreach \c in {0,...,7}{
+  \pgfmathsetmacro{\xc}{18.975+\c*0.875}
+  \draw[dat] (\xc,25.0) -- (\xc,21.85);
+  \ifnum\c>0
+    \pgfmathtruncatemacro{\last}{\c-1}
+    \foreach \s in {0,...,\last}{\draw[ff=skd] ({\xc-0.25},{22.65+\s*0.26}) rectangle ++(0.5,0.2);}
+  \fi}
+\node[lab, text=skd, font=\tiny\bfseries, anchor=west] at (18.6,24.65) {B feeder (skew): column $j$ waits $j$ cycles};
+% A feeder: row r waits r cycles
+\foreach \r in {0,...,7}{
+  \pgfmathsetmacro{\yr}{21.425-\r*0.875}
+  \draw[dat] (16.4,\yr) -- (18.6,\yr);
+  \ifnum\r>0
+    \pgfmathtruncatemacro{\last}{\r-1}
+    \foreach \s in {0,...,\last}{\draw[ff=skd] ({18.25-\s*0.24},{\yr-0.25}) rectangle ++(0.2,0.5);}
+  \fi}
+\node[lab, text=skd, font=\tiny\bfseries, anchor=north west, text width=1.9cm, align=left] at (16.55,23.15) {A feeder (skew): row $i$ waits $i$ cycles};
+% the array
+\foreach \r in {0,...,7}{\foreach \c in {0,...,7}{
+  \draw[ff=npud] ({18.6+\c*0.875},{21.8-(\r+1)*0.875+0.06}) rectangle ++(0.75,0.75);
+  \node[font=\tiny, text=npud] at ({18.975+\c*0.875},{21.8-\r*0.875-0.375}) {PE};}}
+\draw[ours] (16.45,14.75) rectangle (25.7,24.95);
+\node[font=\tiny\bfseries, text=bad, anchor=north west, text width=1.9cm, align=left] at (16.55,24.85)
+  {red dashed: your \rn{mm\_core} already has these parts (4$\times$4)};
+\node[npu, minimum width=7.0cm, minimum height=0.95cm, anchor=south west, font=\tiny, text width=6.8cm] at (18.6,13.05)
+  {\textbf{systolic array 32$\times$32 = 1,024 PEs} (drawn 8$\times$8); each PE = your \rn{pe.sv}: int8 $\times$ int8 + int32 acc;
+   drain: 32 results $\times$ 32 bit leave per clock};
+\draw[dat] (25.6,13.475) -- (26.6,13.475) -- (26.6,26.15) -- (27.8,26.15);
+\node[lab, text=ink, rotate=90, anchor=south, fill=white] at (26.6,20.0) {1,024 bits per clock (32 $\times$ int32)};
+\node[lab, text=ink, anchor=south, fill=white] at (15.4,22.0) {256 bit / clk};
+\node[lab, text=ink, anchor=west, fill=white] at (14.45,24.75) {256 bit / clk};
+
+% =====================================================================
+% post-processing pipeline
+% =====================================================================
+\draw[npu, fill=white] (27.8,12.7) rectangle (38.0,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=npud] at (27.95,27.15) {post-processing (32 lanes side by side)};
+\foreach \nm/\bits/\regtxt [count=\k from 0] in {
+    {+ bias (int32 add)}/32/{R1: 32 lanes $\times$ 32 bit = 1,024 FF},
+    {$\times$ M0 (32 $\times$ 32 $\rightarrow$ 64 bit multiply)}/64/{R2: 32 $\times$ 64 bit = 2,048 FF},
+    {round, then $\gg$ shift}/32/{R3: 32 $\times$ 32 bit = 1,024 FF},
+    {+ zero point, clamp to $-$128 \ldots 127}/8/{R4: 32 $\times$ 8 bit = 256 FF},
+    {activation: ReLU / ReLU6 / lookup table}/8/{R5: 32 $\times$ 8 bit = 256 FF}}{
+  \pgfmathsetmacro{\yy}{26.45-\k*1.6}
+  \node[comb, minimum width=9.6cm, minimum height=0.6cm, anchor=north west, font=\tiny] at (28.1,\yy) {\nm};
+  \ffrow{28.1}{\yy-1.0}{32}{0.17}{ff=npud}
+  \node[lab, text=ink, anchor=west] at (33.65,{\yy-0.91}) {\regtxt};
+  \draw[dat] (30.8,{\yy-0.6}) -- (30.8,{\yy-1.0});}
+\node[comb, minimum width=9.6cm, minimum height=0.6cm, anchor=north west, font=\tiny] at (28.1,18.45)
+  {pooling 2$\times$2 max / average (optional)};
+\node[sram, minimum width=9.6cm, minimum height=1.1cm, anchor=north west, font=\tiny] (osr) at (28.1,17.5)
+  {\textbf{output SRAM} 256 KB, ping $|$ pong};
+\draw[dat] (32.9,17.85) -- (32.9,17.5);
+\node[note, font=\tiny, anchor=north west, text width=9.6cm] at (28.1,16.15) {%
+  One register after each step keeps the clock fast, like your PE has one register after its adder.
+  Post-processing pipeline here $\approx$4,600 FF. Real designs merge some steps.};
+\draw[dat] (32.9,16.4) -- (32.9,15.0);
+\draw[axi1] (32.9,15.0) -- (32.9,12.8) -- (14.0,12.8);
+\node[lab, text=ink, fill=white, anchor=north] at (21.0,12.75) {int8 results $\rightarrow$ DMA write $\rightarrow$ DRAM};
+
+% =====================================================================
+% (a) mm_core vs NPU
+% =====================================================================
+\panel{0}{0.7}{12.6}{12.1}{Your mm\_core vs a real NPU}
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (0.3,11.4) {%
+  \renewcommand{\arraystretch}{1.15}%
+  \begin{tabular}{@{}p{2.0cm} p{4.4cm} p{4.6cm}@{}}
+    \toprule
+    \textbf{Part} & \textbf{your \rn{mm\_core}} & \textbf{real NPU}\\
+    \midrule
+    registers   & \rn{mm\_regs}: 10 regs, 202 FF          & host interface + descriptor regs\\
+    data in     & \rn{host.py} $\rightarrow$ UART, byte by byte & DMA bursts from DRAM\\
+    operand RAM & 8 M9K banks, 64 B used each            & 2 $\times$ 512 KB SRAM, ping $|$ pong\\
+    skew        & \rn{skew\_buffer}: 6 regs per side      & feeders: 32 lanes, up to 31 stages\\
+    MAC array   & 4$\times$4 = 16 MACs                    & 32$\times$32 = 1,024 MACs\\
+    control     & \rn{mm\_controller}: 17 FF               & command processor + sequencers\\
+    results     & 16:1 mux, int32 read by the host        & post-processing $\rightarrow$ int8 $\rightarrow$ DMA\\
+    finish      & host polls STATUS                       & IRQ to the CPU\\
+    clock       & 50 MHz                                  & $\approx$1 GHz\\
+    peak        & 16 $\times$ 2 $\times$ 50 M = 1.6 GOPS   & 1,024 $\times$ 2 $\times$ 1 G $\approx$ 2 TOPS\\
+    \bottomrule
+  \end{tabular}};
+
+% =====================================================================
+% (b) double buffering
+% =====================================================================
+\panel{12.9}{6.4}{25.4}{12.1}{Ping-pong: load, compute and store overlap}
+\foreach \nm [count=\r from 0] in {DMA load, array compute, post + store}{
+  \node[font=\scriptsize\bfseries, anchor=east] at (15.6,{10.6-\r*0.95}) {\nm};}
+\foreach \r/\col in {0/busd, 1/npud, 2/memd}{
+  \foreach \t in {0,...,3}{
+    \pgfmathsetmacro{\x}{15.8+(\t+\r)*1.55}
+    \draw[draw=\col, fill=\col!30] (\x,{10.32-\r*0.95}) rectangle ++(1.45,0.56);
+    \node[font=\tiny\bfseries] at ({\x+0.725},{10.6-\r*0.95}) {tile \t};}}
+\node[note, font=\tiny, anchor=north west, text width=12.0cm] at (13.2,8.0) {%
+  While the array works on tile 1 from the \textbf{ping} SRAM, the DMA fills \textbf{pong} with tile 2 and the
+  post-processing stores tile 0. Without ping-pong the array would sit idle during every load.};
+
+% =====================================================================
+% (c) dataflows
+% =====================================================================
+\panel{12.9}{0.7}{25.4}{6.1}{Which value stays inside the PE?}
+\foreach \nm/\st/\who [count=\k from 0] in {
+    output-stationary/{C stays; A and B move}/{your design},
+    weight-stationary/{weight stays; inputs and partial sums move}/{Google TPU v1 (256$\times$256)},
+    row-stationary/{filter rows stay; reused across a convolution}/{MIT Eyeriss}}{
+  \pgfmathsetmacro{\x}{13.2+\k*4.05}
+  \foreach \r in {0,1,2}{\foreach \c in {0,1,2}{\draw[ff=npud] ({\x+0.9+\c*0.5},{4.55-\r*0.5}) rectangle ++(0.42,0.42);}}
+  \node[font=\tiny\bfseries, anchor=north, text width=3.8cm, align=center] at ({\x+1.8},3.4) {\nm};
+  \node[font=\tiny, anchor=north, text width=3.8cm, align=center] at ({\x+1.8},2.95) {\st};
+  \node[font=\tiny, text=bad, anchor=north, text width=3.8cm, align=center] at ({\x+1.8},1.95) {\who};}
+
+% =====================================================================
+% (d) requantization example
+% =====================================================================
+\panel{25.7}{0.7}{38.3}{12.1}{Worked example: int32 accumulator $\rightarrow$ int8 output}
+\node[note, anchor=north west, text width=12.0cm] at (26.0,11.35) {%
+  The array gives \textbf{acc = 1234} (int32). The layer's real scale is 0.05, so the true value is $1234 \times 0.05 = 61.7$.
+  Hardware has no fractions, so the scale is stored as an integer and a shift:\\[3pt]
+  $0.05 = 0.8 \times 2^{-4}$\quad$\rightarrow$\quad M0 = round$(0.8 \times 2^{15})$ = \textbf{26214},\quad shift = 15 + 4 = \textbf{19}};
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (26.0,8.6) {%
+  \renewcommand{\arraystretch}{1.2}%
+  \begin{tabular}{@{}l l r@{}}
+    \toprule
+    \textbf{Step} & \textbf{Hardware} & \textbf{Value}\\
+    \midrule
+    + bias (0)          & int32 adder                    & 1,234\\
+    $\times$ M0         & 32 $\times$ 32 multiplier       & 32,348,076\\
+    + $2^{18}$ (round)  & adder                          & 32,610,220\\
+    $\gg$ 19            & wires only (drop 19 bits)      & 62\\
+    + zero point (0), clamp & adder + 2 comparators      & 62\\
+    ReLU                & sign bit selects 0 or value    & \textbf{62} (int8)\\
+    \bottomrule
+  \end{tabular}};
+\node[note, anchor=north west, text width=12.0cm] at (26.0,4.15) {%
+  Check: $62 \approx 61.7$ (int8 rounding). A shift by a constant costs \textbf{no logic}: it is just which wires you connect,
+  like dropping the low bits of a bus.\\[3pt]
+  Your design stops at int32 C values; a real NPU always adds this step so the next layer gets int8 again.};
+
+\figfoot{Sizes, widths and clock rates are one example design. Register counts in the post-processing pipeline assume one register after every step.}
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,196 @@
+% 03_caches_mmu.tex -- memory hierarchy, inside a 4-way cache, MESI coherence, TLB + page walk.
+% Build: tectonic 03_caches_mmu.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{3}{Caches and MMU: how the CPU finds its data fast}
+  {A cache is a small SRAM that keeps copies of recently used memory. The address is cut into tag, index and offset;
+   comparators decide hit or miss in one cycle. One example address is followed through the whole page.}
+
+% =====================================================================
+% (A) memory hierarchy
+% =====================================================================
+\panel{0}{13.6}{10.5}{28.1}{Memory hierarchy (typical)}
+\foreach \nm/\col [count=\k from 0] in {registers/cpuf, L1 cache/cpuf, L2 cache/cpuf, {L3 / SLC}/memf, DRAM/memf, flash/hardf}{
+  \pgfmathsetmacro{\yt}{26.6-\k*1.2}\pgfmathsetmacro{\yb}{\yt-1.2}
+  \pgfmathsetmacro{\wt}{1.0+1.5*\k}\pgfmathsetmacro{\wb}{2.5+1.5*\k}
+  \draw[pcb, thick, fill=\col] ({5.25-\wt/2},\yt) -- ({5.25+\wt/2},\yt) -- ({5.25+\wb/2},\yb) -- ({5.25-\wb/2},\yb) -- cycle;
+  \node[font=\scriptsize\bfseries] at (5.25,{(\yt+\yb)/2}) {\nm};}
+\draw[-{Stealth[length=2mm]}, thick, good] (0.45,19.6) -- (0.45,26.4);
+\node[font=\tiny\bfseries, text=good, rotate=90, anchor=south] at (0.4,23.0) {faster, smaller, costlier per bit};
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (0.35,19.0) {%
+  \renewcommand{\arraystretch}{1.1}%
+  \begin{tabular}{@{}l l l@{}}
+    \toprule
+    \textbf{Level} & \textbf{Size} & \textbf{Time to read}\\
+    \midrule
+    registers  & 32 $\times$ 32 bit (RV32) & inside the cycle\\
+    L1 (per core) & 32--64 KB          & $\approx$4 cycles\\
+    L2         & 256 KB -- 2 MB        & $\approx$10--15 cycles\\
+    L3 / SLC   & 4--32 MB, shared      & $\approx$30--50 cycles\\
+    DRAM       & 4--16 GB              & $\approx$100 ns $\approx$ 300 cycles\\
+    flash      & 128 GB -- 1 TB        & $\approx$50--100 $\mu$s\\
+    \bottomrule
+  \end{tabular}};
+\node[note, font=\small, anchor=north west, text width=9.8cm] at (0.35,15.7) {%
+  Works because programs reuse recent data and use nearby data. Most loads hit in L1.};
+
+% =====================================================================
+% (B) inside one L1 data cache
+% =====================================================================
+\panel{10.8}{13.6}{38.3}{28.1}{Inside one L1 data cache: 32 KB, 4 ways, 64-byte lines}
+% address bar
+\node[anchor=west, font=\scriptsize\bfseries] at (11.1,26.85) {physical address 0x8000\_1A44 =};
+\foreach \b in {0,...,31}{
+  \pgfmathsetmacro{\x}{16.0+(31-\b)*0.36}
+  \ifnum\b>12 \def\fc{cpuf}\else\ifnum\b>5 \def\fc{pwrf}\else\def\fc{medf}\fi\fi
+  \draw[pcb, fill=\fc] (\x,26.65) rectangle ++(0.36,0.4);}
+\draw[pcb, very thick] (16.0,26.65) rectangle (27.52,27.05);
+\node[font=\scriptsize\bfseries, text=cpud] at (19.42,26.4) {tag [31:13] = 19 bit = 0x40000};
+\node[font=\scriptsize\bfseries, text=pwrd] at (24.82,26.4) {index [12:6] = 105};
+\node[font=\scriptsize\bfseries, text=medd] at (26.44,27.25) {offset [5:0] = 4};
+\node[note, anchor=west, text width=10.2cm] at (27.9,26.85)
+  {index picks 1 of 128 sets $\cdot$ tag says which memory line it is $\cdot$ offset picks the byte in the 64-byte line};
+
+% index decoder
+\node[comb, minimum width=1.25cm, minimum height=3.6cm, text width=1.1cm, anchor=south west, font=\tiny] at (11.05,21.9)
+  {\textbf{index decoder}\\7 bit $\rightarrow$ 1 of 128 rows};
+\draw[dat] (24.82,26.15) -- (24.82,25.95) -- (11.72,25.95) -- (11.72,25.5);
+
+% four ways
+\foreach \w/\v/\d/\t/\res in {0/1/0/0x1F3A2/{$\neq$}, 1/0/0/0x40000/{V=0}, 2/1/1/0x40000/{\textbf{=}}, 3/1/0/0x2C410/{$\neq$}}{
+  \pgfmathsetmacro{\x}{13.5+\w*5.0}
+  \node[font=\scriptsize\bfseries, anchor=south west] at (\x,25.35) {way \w};
+  \node[lab, anchor=south] at (\x+0.15,25.0) {V};
+  \node[lab, anchor=south] at (\x+0.45,25.0) {D};
+  \node[lab, anchor=south] at (\x+1.35,25.0) {tag (19)};
+  \node[lab, anchor=south] at (\x+3.46,25.0) {data: 64 B = 16 words};
+  \foreach \row/\yy in {set 0/24.6, set 1/24.2, {\vdots}/23.8, set 105/23.4, {\vdots}/23.0, set 127/22.6}{
+    \draw[pcb, fill=white] (\x,\yy-0.17) rectangle ++(0.3,0.36);
+    \draw[pcb, fill=white] (\x+0.3,\yy-0.17) rectangle ++(0.3,0.36);
+    \draw[cpud, fill=cpuf] (\x+0.6,\yy-0.17) rectangle ++(1.5,0.36);
+    \foreach \q in {0,...,15}{\draw[memd, fill=memf] ({\x+2.1+\q*0.17},\yy-0.17) rectangle ++(0.17,0.36);}}
+  \draw[bad, line width=1.4pt] (\x-0.05,23.18) rectangle (\x+4.87,23.64);
+  \node[font=\tiny\bfseries] at (\x+0.15,23.41) {\v};
+  \node[font=\tiny\bfseries] at (\x+0.45,23.41) {\d};
+  \node[font=\tiny\ttfamily\bfseries] at (\x+1.35,23.41) {\t};
+  \node[circle, comb, minimum size=0.6cm, inner sep=0pt, font=\scriptsize] (cmp\w) at (\x+1.35,21.45) {\res};
+  \draw[dat] (\x+1.35,22.4) -- (cmp\w.north);
+  \draw[dat] (\x+0.15,22.4) -- (\x+0.15,21.45) -- (cmp\w.west);
+}
+\foreach \row/\yy in {set 0/24.6, set 1/24.2, set 105/23.4, set 127/22.6}{\node[lab, anchor=east] at (13.45,\yy) {\row};}
+% address tag bus to the comparators
+\draw[dat] (16.4,26.65) -- (16.4,26.25) -- (10.95,26.25) -- (10.95,20.75) -- (33.3,20.75);
+\foreach \w in {0,...,3}{\pgfmathsetmacro{\x}{13.5+\w*5.0+1.35}\draw[dat] (\x,20.75) -- (\x,21.15);}
+\node[lab, anchor=north west, fill=white] at (11.0,20.72) {address tag 0x40000 goes to all 4 comparators at the same time};
+\node[note, anchor=north west, text width=4.2cm] at (34.4,26.0) {%
+  \textbf{size check}\\
+  32 KB / 64 B = 512 lines\\
+  512 / 4 ways = 128 sets\\[3pt]
+  tag store: 4 $\times$ 128 $\times$ (19+2)\\= 10,752 bits\\
+  data store: 262,144 bits\\[3pt]
+  both are \textbf{SRAM}, not FF\\
+  + 3 bits per set for\\``least recently used''};
+
+% hit logic
+\node[comb, minimum width=4.0cm, minimum height=0.85cm, anchor=south west, font=\tiny] (hit) at (12.6,19.1)
+  {\textbf{hit} = OR of (tag equal AND V) $\rightarrow$ way 2};
+\node[comb, minimum width=5.6cm, minimum height=0.85cm, anchor=south west, font=\tiny] (wm) at (17.3,19.1)
+  {\textbf{way mux} 4 $\rightarrow$ 1: pick the 64-byte line of way 2};
+\node[comb, minimum width=6.2cm, minimum height=0.85cm, anchor=south west, font=\tiny] (om) at (23.6,19.1)
+  {\textbf{word mux} 16 $\rightarrow$ 1: offset[5:2] = 1 $\rightarrow$ bytes 4--7};
+\node[cpu, minimum width=3.3cm, minimum height=0.85cm, anchor=south west, font=\tiny] (out) at (30.5,19.1)
+  {32-bit data $\rightarrow$ CPU};
+\draw[dat] (hit) -- (wm); \draw[dat] (wm) -- (om); \draw[dat] (om) -- (out);
+
+\node[note, anchor=north west, text width=12.6cm] at (11.1,18.45) {%
+  \textbf{Hit} (this example): set 105 is read in all 4 ways at once, way 2 has V = 1 and tag 0x40000 $\Rightarrow$ data in $\approx$4 cycles.\\[3pt]
+  \textbf{Miss}: ask L2 for the 64-byte line; choose a victim way (least recently used); if its D = 1, write it back first;
+  fill the line, then answer the CPU. A miss buffer lets the core continue with other loads meanwhile.};
+\node[note, anchor=north west, text width=12.4cm] at (25.3,18.45) {%
+  \textbf{Write-back}: a store changes only the cache line and sets D = 1. Memory is updated when the line is thrown out.\\[3pt]
+  \textbf{V} = line holds real data. \textbf{D} = line is newer than memory.
+  Big caches add 2 state bits per line for coherence (next panel).\\[3pt]
+  A hit costs 1 SRAM read + 4 compares of 19 bits + 2 muxes: all inside one pipeline stage group.};
+
+% =====================================================================
+% (C) coherence: MESI
+% =====================================================================
+\panel{0}{0.7}{14.5}{13.3}{Coherence: MESI states of one line}
+\node[circle, cpu, minimum size=1.5cm, font=\normalsize\bfseries] (M) at (2.6,10.0) {M};
+\node[circle, cpu, minimum size=1.5cm, font=\normalsize\bfseries] (E) at (9.0,10.0) {E};
+\node[circle, cpu, minimum size=1.5cm, font=\normalsize\bfseries] (S) at (9.0,4.6) {S};
+\node[circle, draw=muted, fill=white, thick, minimum size=1.5cm, font=\normalsize\bfseries] (I) at (2.6,4.6) {I};
+\draw[dat] (I) to[bend left=12] node[lab, text=ink, fill=white, pos=0.5] {read, no other copy} (E);
+\draw[dat] (I) to[bend right=12] node[lab, text=ink, fill=white, below] {read, others have it} (S);
+\draw[dat] (I) to[bend left=20] node[lab, text=ink, fill=white, left] {write} (M);
+\draw[dat] (E) to node[lab, text=ink, fill=white, above] {my write (silent)} (M);
+\draw[dat] (S) to[bend right=8] node[lab, text=ink, fill=white, pos=0.35] {my write: invalidate others} (M);
+\draw[ctl] (M) to[bend right=30] node[lab, text=ink, fill=white, pos=0.6] {other core reads} (S);
+\draw[ctl] (E) to node[lab, text=ink, fill=white, right] {other core reads} (S);
+\draw[ctl] (S) to[bend left=25] node[lab, text=ink, fill=white, below] {other core writes} (I);
+\node[note, anchor=north west, text width=13.8cm] at (0.35,2.85) {%
+  \textbf{M} only copy, changed $\cdot$ \textbf{E} only copy, clean $\cdot$ \textbf{S} clean, others may have it $\cdot$ \textbf{I} not valid.
+  Solid = this core's action, dashed = seen from another core (snoop).\\[3pt]
+  Stored as 2 extra bits next to each tag. A snoop filter in the shared L3 remembers which core has which line, so not every core is asked.};
+
+% =====================================================================
+% (D) MMU: TLB + page walk
+% =====================================================================
+\panel{14.8}{0.7}{38.3}{13.3}{MMU: virtual address $\rightarrow$ physical address (RISC-V Sv32, 4 KB pages)}
+\node[anchor=west, font=\scriptsize\bfseries] at (15.1,11.75) {virtual 0x0040\_3A44 =};
+\node[cpu, minimum width=3.0cm, minimum height=0.5cm, anchor=west, inner sep=0pt] (v1) at (18.6,11.75) {VPN1 = 0x001 (10)};
+\node[cpu, minimum width=3.0cm, minimum height=0.5cm, anchor=west, inner sep=0pt] (v0) at (21.6,11.75) {VPN0 = 0x003 (10)};
+\node[med, minimum width=3.4cm, minimum height=0.5cm, anchor=west, inner sep=0pt] (vo) at (24.6,11.75) {offset = 0xA44 (12)};
+
+% TLB
+\node[anchor=north west, font=\scriptsize\bfseries, text=cpud] at (15.1,10.8) {TLB: 32 entries, all compared at once};
+\foreach \e/\vv/\vpn/\ppn [count=\k from 0] in {0/1/0x00010/0x80020, 1/1/0x00403/0x80001, {\vdots}/{}/{}/{}, 31/0/0x7FFFF/0x00000}{
+  \pgfmathsetmacro{\yy}{9.9-\k*0.5}
+  \node[lab, anchor=east] at (15.6,\yy) {\e};
+  \draw[pcb, fill=white] (15.7,\yy-0.2) rectangle ++(0.4,0.4);
+  \draw[cpud, fill=cpuf] (16.1,\yy-0.2) rectangle ++(2.0,0.4);
+  \draw[medd, fill=medf] (18.1,\yy-0.2) rectangle ++(2.0,0.4);
+  \draw[pcb, fill=white] (20.1,\yy-0.2) rectangle ++(1.4,0.4);
+  \node[font=\tiny\ttfamily] at (15.9,\yy) {\vv};
+  \node[font=\tiny\ttfamily] at (17.1,\yy) {\vpn};
+  \node[font=\tiny\ttfamily] at (19.1,\yy) {\ppn};
+  \ifx\vv\empty\else\node[font=\tiny] at (20.8,\yy) {RWXU..};\fi}
+\node[lab, anchor=south] at (15.9,10.1) {V}; \node[lab, anchor=south] at (17.1,10.1) {VPN (20)};
+\node[lab, anchor=south] at (19.1,10.1) {PPN (22)}; \node[lab, anchor=south] at (20.8,10.1) {flags (7)};
+\draw[bad, line width=1.4pt] (15.65,9.18) rectangle (21.55,9.62);
+\node[note, anchor=north west, text width=10.8cm] at (15.1,5.6) {%
+  50 bits $\times$ 32 entries = 1,600 bits. Small and compared in parallel $\Rightarrow$ usually \textbf{flip-flops + 32 comparators}
+  (a CAM), not SRAM.\\[3pt]
+  VPN 0x00403 matches entry 1 $\Rightarrow$ PPN 0x80001, in the same cycle as the cache index.};
+\draw[dat] (v0.south) -- (21.6,10.75) -- (21.85,10.75) -- (21.85,9.4) -- (21.55,9.4);
+\node[lab, anchor=west] at (21.9,10.2) {VPN = VPN1:VPN0};
+
+\node[anchor=west, font=\scriptsize\bfseries] at (15.1,7.3) {physical =};
+\node[med, minimum width=4.2cm, minimum height=0.5cm, anchor=west, inner sep=0pt] (pp) at (17.0,7.3) {PPN = 0x80001 (22)};
+\node[med, minimum width=3.4cm, minimum height=0.5cm, anchor=west, inner sep=0pt] (po) at (21.2,7.3) {offset = 0xA44};
+\node[note, anchor=north west, text width=10.8cm] at (15.1,6.75) {%
+  = \textbf{0x8000\_1A44}: the address the cache above used. The offset is copied, only the page number is translated.};
+\draw[dat] (19.1,9.15) -- (19.1,7.55);
+\draw[dat] (vo.south) |- (22.9,8.1) -- (po.north);
+
+% page walk
+\node[anchor=north west, font=\scriptsize\bfseries, text=memd] at (26.6,10.8) {TLB miss: hardware page-table walk};
+\node[pwr, minimum width=2.5cm, minimum height=0.8cm, anchor=north west, font=\tiny] (satp) at (26.6,10.3)
+  {\textbf{satp} register\\root table PPN};
+\node[sram, minimum width=2.6cm, minimum height=3.6cm, anchor=north west, font=\tiny, text width=2.4cm] (pt1) at (29.6,10.3)
+  {\textbf{level-1 table}\\1024 PTEs $\times$ 4 B\\(in DRAM)\\[4pt]entry [VPN1 = 1]\\$\rightarrow$ next table};
+\node[sram, minimum width=2.6cm, minimum height=3.6cm, anchor=north west, font=\tiny, text width=2.4cm] (pt0) at (33.0,10.3)
+  {\textbf{level-0 table}\\1024 PTEs $\times$ 4 B\\(in DRAM)\\[4pt]entry [VPN0 = 3]\\$\rightarrow$ PPN 0x80001};
+\draw[dat] (satp.east) -- (pt1.west |- satp.east);
+\draw[dat] (pt1.east) -- (pt0.west);
+\node[note, anchor=north west, text width=10.9cm] at (26.6,5.75) {%
+  $\bullet$ The walker is a small FSM: 2 memory reads (each may hit in the caches), then it writes the result into a TLB entry and the access is retried.\\[2pt]
+  $\bullet$ PTE V = 0 or wrong permission $\Rightarrow$ \textbf{page fault} exception, the OS fixes it.\\[2pt]
+  $\bullet$ The NPU and GPU have their own MMU (an IOMMU) so they can use the same virtual addresses as the app.};
+
+\figfoot{Sizes and latencies are typical ranges. The cache example uses a 32-bit physical address so that one address can be followed from the TLB into the cache.}
+\end{tikzpicture}
+\end{document}

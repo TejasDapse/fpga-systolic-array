@@ -1,0 +1,165 @@
+% 12_mini_soc_de10lite.tex -- a RISC-V CPU + mm_core on one Avalon-MM bus in the MAX 10.
+% Build: tectonic 12_mini_soc_de10lite.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{12}{Your next step: a mini SoC on the DE10-Lite (RISC-V CPU + your accelerator)}
+  {Put a CPU in the same FPGA as \rn{mm\_core} and connect both to one bus. The CPU writes \rn{mm\_regs} directly:
+   no PC and no UART in the data path. This is a plan, not something built yet.}
+
+% =====================================================================
+% (A) system diagram
+% =====================================================================
+\panel{0}{13.0}{24.0}{28.1}{The system in Platform Designer (Intel's SoC builder)}
+\draw[pcb, line width=1.4pt, rounded corners=6pt] (0.35,15.2) rectangle (23.65,27.3);
+\node[anchor=north west, font=\scriptsize\bfseries, text=pcb] at (0.5,27.2) {MAX 10 10M50 FPGA};
+\node[pwr, minimum width=3.6cm, minimum height=1.3cm, text width=3.4cm, anchor=north west, font=\tiny] at (0.6,26.7)
+  {\textbf{clock + reset}\\50 MHz board clock\\reset bridge (sync release)};
+\node[cpu, minimum width=7.6cm, minimum height=2.1cm, text width=7.4cm, anchor=north west, font=\scriptsize] (cpu) at (4.6,26.7)
+  {\textbf{RISC-V CPU}: Nios V/m (Intel's RV32I soft core) \textbf{or} your own RV32I core from the roadmap\\[2pt]
+   \tiny instruction port + data port = 2 Avalon-MM hosts; IRQ inputs};
+\node[npu, minimum width=10.6cm, minimum height=2.1cm, text width=10.4cm, anchor=north west, font=\scriptsize] at (12.6,26.7)
+  {\textbf{why}: the CPU runs the control code (load A, B, START, wait, read C) at bus speed; the PC is only needed
+   for printing results};
+\draw[bus] (0.6,22.7) rectangle (23.4,23.9);
+\node[font=\scriptsize\bfseries, text=busd] at (12.0,23.3)
+  {\textbf{Avalon-MM interconnect}, generated: address decoders, arbiters, width adapters, waitrequest logic};
+\draw[axi] (6.5,24.6) -- (6.5,23.9); \draw[axi] (10.3,24.6) -- (10.3,23.9);
+\node[lab, text=ink, anchor=west] at (6.6,24.3) {instr}; \node[lab, text=ink, anchor=west] at (10.4,24.3) {data};
+\foreach \nm/\tx/\sty [count=\k from 0] in {
+    on-chip RAM/{M9K blocks, 32 KB: program + data}/mem,
+    JTAG UART/{printf to the PC over the USB-Blaster}/per,
+    interval timer/{counts cycles; OS tick}/per,
+    PIO/{LEDs, switches, 7-segment}/per,
+    SDRAM controller/{to the 64 MB SDRAM chip}/mem,
+    \rn{mm\_core\_avalon}/{wrapper around your \rn{mm\_core}}/npu}{
+  \pgfmathsetmacro{\x}{0.6+\k*3.82}
+  \node[\sty, fill=white, minimum width=3.6cm, minimum height=2.3cm, text width=3.4cm, anchor=north west, font=\tiny]
+    (ag\k) at (\x,21.9) {\textbf{\nm}\\[2pt]\tx};
+  \draw[apb] ({\x+1.8},22.7) -- ({\x+1.8},21.9);}
+\draw[ours] (19.65,22.0) rectangle (23.35,19.5);
+\node[hard, minimum width=3.6cm, minimum height=1.1cm, text width=3.4cm, anchor=north west, font=\tiny] at (15.88,18.4)
+  {\textbf{SDRAM chip}\\on the board, 16 bit};
+\draw[axi] (17.68,19.6) -- (17.68,18.4);
+\node[npu, minimum width=3.6cm, minimum height=1.6cm, text width=3.4cm, anchor=north west, font=\tiny] at (19.7,18.4)
+  {\textbf{mm\_core}\\(unchanged: regs, RAM banks, skew, 4$\times$4 PEs, FSM)};
+\draw[dat] (21.5,19.6) -- (21.5,18.4);
+\draw[irq] (21.5,22.0) -- (21.5,22.4) -- (12.1,22.4) -- (12.1,24.6);
+\draw[irq] (9.94,21.9) -- (9.94,22.4);
+\node[font=\tiny\bfseries, text=bad, fill=busf, inner sep=1pt] at (15.0,22.4) {IRQ: DONE};
+\node[note, anchor=north west, text width=15.0cm] at (0.6,18.35) {%
+  The UART bridge, \rn{uart\_rx} and \rn{uart\_tx} are no longer in the data path. The JTAG UART is only for messages.\\[3pt]
+  Platform Designer writes all the bus logic; you write one component: the wrapper (right).};
+
+% =====================================================================
+% (B) memory map
+% =====================================================================
+\panel{24.3}{20.6}{38.3}{28.1}{Memory map (example)}
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (24.6,27.35) {%
+  \renewcommand{\arraystretch}{1.15}%
+  \begin{tabular}{@{}l l l@{}}
+    \toprule
+    \textbf{Component} & \textbf{Base address} & \textbf{Size}\\
+    \midrule
+    SDRAM          & \rn{0x0000\_0000} & 64 MB\\
+    on-chip RAM    & \rn{0x0800\_0000} & 32 KB\\
+    \rn{mm\_core}  & \rn{0x0810\_0000} & 16 KB (your 0x0000--0x3FFF map)\\
+    JTAG UART      & \rn{0x0811\_0000} & 8 B\\
+    timer          & \rn{0x0811\_0020} & 32 B\\
+    PIO (LEDs)     & \rn{0x0811\_0040} & 16 B\\
+    \bottomrule
+  \end{tabular}};
+\node[note, font=\scriptsize, anchor=north west, text width=13.4cm] at (24.6,23.45) {%
+  Platform Designer assigns the real base addresses; the generated \rn{system.h} gives them to your C code
+  (e.g. \rn{MM\_CORE\_BASE}). Your register offsets stay the same: START is at base + 0x0000.};
+
+% =====================================================================
+% (C) the wrapper
+% =====================================================================
+\panel{24.3}{13.0}{38.3}{20.3}{The wrapper: Avalon-MM agent $\rightarrow$ your \rn{mm\_regs} bus}
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (24.6,19.55) {%
+  \renewcommand{\arraystretch}{1.12}%
+  \begin{tabular}{@{}l c l@{}}
+    \toprule
+    \textbf{Avalon agent signal} & & \textbf{your signal}\\
+    \midrule
+    \rn{avs\_read | avs\_write}   & $\rightarrow$ & \rn{bus\_valid}\\
+    \rn{avs\_write}               & $\rightarrow$ & \rn{bus\_write}\\
+    \rn{avs\_address}, \rn{avs\_byteenable} & $\rightarrow$ & \rn{bus\_addr} (byte address)\\
+    \rn{avs\_writedata} (lane)    & $\rightarrow$ & \rn{bus\_wdata}\\
+    \rn{avs\_waitrequest}         & $\leftarrow$  & \rn{!bus\_ready}\\
+    \rn{avs\_readdata}            & $\leftarrow$  & \rn{bus\_rdata}\\
+    \rn{avs\_readdatavalid}       & $\leftarrow$  & \rn{bus\_rvalid} (read latency 1)\\
+    \rn{irq}                      & $\leftarrow$  & DONE flag AND an enable bit (new)\\
+    \bottomrule
+  \end{tabular}};
+\node[note, font=\scriptsize, anchor=north west, text width=13.4cm] at (24.6,15.2) {%
+  \textbf{Watch the byte lanes}: on a 32-bit bus a byte store (\rn{sb}) to A at offset 1 arrives on \rn{writedata[15:8]} with
+  \rn{byteenable = 0010}. Your \rn{mm\_regs} takes A / B bytes from \rn{wdata[7:0]}, so the wrapper must pick the lane that
+  \rn{byteenable} marks (and rebuild the low 2 address bits from it if the address arrives word-aligned).};
+
+% =====================================================================
+% (D) C code
+% =====================================================================
+\panel{0}{0.7}{12.6}{12.7}{The software: plain C on the RISC-V}
+\node[draw=cpud, fill=white, rounded corners=3pt, anchor=north west, align=left, font=\scriptsize\ttfamily, inner sep=5pt] at (0.35,11.95) {%
+  \#include "system.h"\ \ \ \ \ \ \ \ \ \ // MM\_CORE\_BASE from Platform Designer\\
+  volatile uint8\_t\ \ *mm8\ \ = (uint8\_t *)\ MM\_CORE\_BASE;\\
+  volatile uint32\_t *mm32 = (uint32\_t *)MM\_CORE\_BASE;\\[3pt]
+  for (i = 0; i < 4; i++)\ \ \ \ \ \ \ \ \ \ \ \ // A: 0x1000 + i*64 + k\\
+  \ \ for (k = 0; k < K; k++) mm8[0x1000 + i*64 + k] = A[i][k];\\
+  for (k = 0; k < K; k++)\ \ \ \ \ \ \ \ \ \ \ \ // B: 0x2000 + k*4 + j\\
+  \ \ for (j = 0; j < 4; j++) mm8[0x2000 + k*4 + j] = B[k][j];\\[3pt]
+  mm32[0x0008/4] = K;\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ // CFG\_K\\
+  mm32[0x0000/4] = 1;\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ // CTRL.START\\
+  while ((mm32[0x0004/4] \& 2) == 0) ;\ // STATUS.DONE (or wait for IRQ)\\[3pt]
+  for (i = 0; i < 16; i++)\ \ \ \ \ \ \ \ \ \ \ // C: 0x3000 + 4*index\\
+  \ \ C[i] = (int32\_t)mm32[(0x3000 + 4*i)/4];};
+\node[note, anchor=north west, text width=11.9cm] at (0.35,6.6) {%
+  Exactly the same register map that \rn{host.py} uses today, just written as memory stores and loads.
+  \rn{volatile} tells the compiler that every access must really happen on the bus.\\[3pt]
+  If your CPU has a data cache, keep this address range uncached, or flush (Figure 8). Nios V/m has no data cache.};
+
+% =====================================================================
+% (E) speed comparison
+% =====================================================================
+\panel{12.9}{0.7}{25.4}{12.7}{Where the time goes: today vs mini SoC}
+\foreach \nm/\v/\col/\txt [count=\k from 0] in {
+    {compute (12 cycles)}/0.38/npud/{240 ns (measured in simulation)},
+    {mini SoC: bus writes + reads}/1.88/cpud/{$\approx$5--10 $\mu$s (estimate)},
+    {today: 154 UART bytes}/5.13/bad/{13.4 ms}}{
+  \pgfmathsetmacro{\yy}{10.6-\k*1.6}
+  \node[font=\scriptsize\bfseries, anchor=west] at (13.2,{\yy+0.55}) {\nm};
+  \fill[\col!55] (13.2,{\yy-0.25}) rectangle ++({0.3+\v*1.9},0.5);
+  \node[font=\scriptsize, anchor=west] at ({13.65+\v*1.9},\yy) {\txt};}
+\draw[muted] (13.2,5.85) -- (24.9,5.85);
+\foreach \t/\x in {100 ns/0, 1 $\mu$s/1, 10 $\mu$s/2, 100 $\mu$s/3, 1 ms/4, 10 ms/5}{
+  \draw[muted] ({13.5+\x*1.9},5.75) -- ({13.5+\x*1.9},5.95);
+  \node[lab] at ({13.5+\x*1.9},5.55) {\t};}
+\node[lab, text=ink, anchor=north] at (19.0,5.3) {log scale: each step is 10$\times$};
+\node[note, anchor=north west, text width=11.9cm] at (13.2,4.5) {%
+  Today the UART moves 154 bytes at 86.8 $\mu$s each: about 56,000$\times$ the compute time.
+  On the bus, about 50 transfers of a few CPU cycles each: roughly 1,000$\times$ less overhead.\\[3pt]
+  The estimate assumes a simple CPU at 50 MHz; measure the real number with the interval timer and put it in your README.};
+
+% =====================================================================
+% (F) steps
+% =====================================================================
+\panel{25.7}{0.7}{38.3}{12.7}{Build steps (on Ubuntu)}
+\node[note, anchor=north west, text width=12.0cm] at (26.0,11.95) {%
+  \textbf{1} Platform Designer: new system; add the CPU, on-chip RAM, JTAG UART, timer, PIO.
+  Check that your Quartus Lite version lists Nios V/m for MAX 10 in the IP Catalog.\\[3pt]
+  \textbf{2} Write \rn{mm\_core\_avalon.sv} (the wrapper) and add it as a component with the Component Editor.\\[3pt]
+  \textbf{3} Add the IRQ output: DONE AND an enable bit.\\[3pt]
+  \textbf{4} Generate the system, instantiate it in \rn{top\_de10lite.sv}, compile, check timing at 50 MHz.\\[3pt]
+  \textbf{5} Make the board support package + app (Nios V command-line tools or the RiscFree IDE).\\[3pt]
+  \textbf{6} Run; print C through the JTAG UART; compare with \rn{golden\_model.py}.\\[3pt]
+  \textbf{7} Time it with the interval timer; record the numbers.\\[5pt]
+  \textbf{Other CPU options}: your own RV32I core (roadmap step 2), or an open core such as PicoRV32 with a small
+  bus adapter. The wrapper idea stays the same.};
+
+\figfoot{Base addresses, sizes and the overhead estimate are examples / estimates. Tool and IP availability depends on the Quartus version: check the IP Catalog.}
+\end{tikzpicture}
+\end{document}

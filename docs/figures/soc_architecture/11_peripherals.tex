@@ -1,0 +1,181 @@
+% 11_peripherals.tex -- APB bridge and bus, APB waveform, UART, SPI, I2C, GPIO / timer / watchdog.
+% Build: tectonic 11_peripherals.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\newcommand{\tick}[2]{\node[circle, fill=good, text=white, font=\tiny\bfseries, inner sep=0.5pt] at (#1,#2) {\checkmark};}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{11}{Peripherals: slow devices on the APB bus}
+  {UART, SPI, I2C, GPIO and timers are small blocks: a few registers plus a shift register or a counter.
+   The CPU reaches them through an AXI-to-APB bridge, and each one has an IRQ wire to the GIC.}
+
+% =====================================================================
+% (A) bridge + bus
+% =====================================================================
+\panel{0}{15.0}{14.0}{28.1}{AXI $\rightarrow$ APB bridge and the peripheral bus}
+\node[bus, minimum width=13.3cm, minimum height=0.75cm, anchor=north west] at (0.35,27.3) {AXI from the NoC (fast, 128 bit)};
+\node[bus, minimum width=13.3cm, minimum height=1.35cm, anchor=north west, text width=13.0cm] at (0.35,26.3)
+  {\textbf{AXI $\rightarrow$ APB bridge}: a small FSM; turns one AXI request into one APB transfer
+   and decodes PADDR $\rightarrow$ one PSEL per peripheral};
+\draw[copper, line width=1.4pt] (0.8,24.0) -- (13.4,24.0);
+\node[lab, text=busd, anchor=south west, font=\tiny\bfseries] at (0.8,24.02) {shared: PADDR, PWDATA, PWRITE, PENABLE (32 bit, e.g. 100 MHz)};
+\foreach \nm/\ad [count=\k from 0] in {UART/0x1000\_0000, SPI/0x1000\_1000, I2C/0x1000\_2000, GPIO/0x1000\_3000, timer/0x1000\_4000, watchdog/0x1000\_5000}{
+  \pgfmathsetmacro{\x}{0.35+\k*2.25}
+  \node[per, fill=white, minimum width=2.05cm, minimum height=1.9cm, text width=1.9cm, anchor=north west, font=\tiny]
+    (p\k) at (\x,23.0) {\textbf{\nm}\\[2pt]\ad};
+  \draw[apb1] ({\x+1.0},24.0) -- ({\x+1.0},23.0);
+  \node[lab, anchor=west] at ({\x+1.05},23.5) {PSEL\k};
+  \draw[irq] ({\x+1.0},21.1) -- ({\x+1.0},20.45);}
+\draw[bad, densely dotted, line width=1.3pt] (1.35,20.45) -- (12.6,20.45);
+\node[font=\tiny\bfseries, text=bad, anchor=north] at (7.0,20.4) {6 IRQ wires $\rightarrow$ GIC};
+\node[note, anchor=north west, text width=13.3cm] at (0.35,19.6) {%
+  Example map: 4 KB per peripheral. Inside each one, the register offsets work exactly like your \rn{mm\_regs}:
+  \rn{0x00} DATA, \rn{0x04} STATUS, \rn{0x08} CTRL, \ldots\\[3pt]
+  \textbf{Why a separate slow bus?} Peripherals need only a few transfers per second. APB has no bursts and no IDs, so each
+  peripheral's bus interface is a handful of gates, and the fast AXI fabric is not slowed down by them.};
+
+% =====================================================================
+% (B) APB waveform
+% =====================================================================
+\panel{14.3}{21.2}{38.3}{28.1}{APB: a write, then a read with one wait cycle}
+\renewcommand{\cw}{1.3}
+\foreach \c in {0,...,9}{\node[lab] at ({17.2+(\c+0.5)*\cw},27.35) {\c};}
+\wname{17.2}{26.65}{PCLK}     \wclk{17.2}{26.65}{10}
+\wname{17.2}{26.0}{PSEL}      \wsig{17.2}{26.0}{0,1,1,0,1,1,1,0,0,0}
+\wname{17.2}{25.35}{PENABLE}  \wsig{17.2}{25.35}{0,0,1,0,0,1,1,0,0,0}
+\wname{17.2}{24.7}{PWRITE}    \wsig{17.2}{24.7}{0,1,1,0,0,0,0,0,0,0}
+\wname{17.2}{24.05}{PADDR}
+\widle{17.2}{24.05}{0}{1} \wbus{17.2}{24.05}{1}{3}{0x00 DATA} \widle{17.2}{24.05}{3}{4} \wbus{17.2}{24.05}{4}{7}{0x04 STATUS} \widle{17.2}{24.05}{7}{10}
+\wname{17.2}{23.4}{PWDATA}
+\widle{17.2}{23.4}{0}{1} \wbus{17.2}{23.4}{1}{3}{0x42} \widle{17.2}{23.4}{3}{10}
+\wname{17.2}{22.75}{PREADY}   \wsig{17.2}{22.75}{0,0,1,0,0,0,1,0,0,0}
+\wname{17.2}{22.1}{PRDATA}
+\widle{17.2}{22.1}{0}{6} \wbus{17.2}{22.1}{6}{7}{0x01} \widle{17.2}{22.1}{7}{10}
+\foreach \c in {3,7}{\draw[good, thick, densely dashed] ({17.2+\c*\cw},22.0) -- ({17.2+\c*\cw},27.15); \tick{{17.2+\c*\cw}}{21.75}}
+\node[note, font=\tiny, anchor=north west, text width=6.5cm] at (31.6,27.3) {%
+  \textbf{Setup phase}: PSEL = 1, PENABLE = 0, address and data on the bus.\\[3pt]
+  \textbf{Access phase}: PENABLE = 1. The transfer ends on the first edge with PREADY = 1.\\[3pt]
+  Cycle 5: the peripheral is not ready (PREADY = 0), so the access phase is stretched by one cycle.\\[3pt]
+  Write 0x42 to UART DATA = send the byte 0x42. Read STATUS = 0x01 (TX busy).\\[3pt]
+  Minimum 2 cycles per transfer; no overlapping.};
+
+% =====================================================================
+% (C) UART
+% =====================================================================
+\panel{14.3}{15.0}{38.3}{20.9}{UART: one byte as a frame of 10 bits (your \rn{uart\_tx.sv} / \rn{uart\_rx.sv})}
+\node[anchor=north west, font=\tiny\bfseries] at (14.6,20.15) {registers};
+\foreach \nm/\n [count=\k from 0] in {DATA/8, STATUS/2, CTRL/2, BAUD\_DIV/16}{
+  \node[font=\tiny\ttfamily, anchor=west] at (14.6,{19.55-\k*0.5}) {\nm};
+  \ffrow{16.2}{19.43-\k*0.5}{\n}{0.2}{ff=prd}}
+\node[lab, anchor=west] at (19.5,18.06) {= 434};
+\node[anchor=north west, font=\tiny\bfseries] at (14.6,17.45) {TX shift register (10 bits): stop, d7 \ldots d0, start};
+\ffrow{14.65}{16.6}{10}{0.36}{ff=prd}
+\foreach \t [count=\k from 0] in {1,0,1,0,0,0,0,1,0,0}{\node[font=\tiny] at ({14.83+\k*0.36},16.78) {\t};}
+\draw[dat] (18.25,16.78) -- (18.8,16.78); \node[lab, text=ink, anchor=west] at (18.8,16.78) {TX pin};
+\node[note, font=\tiny, anchor=north west, text width=5.3cm] at (14.6,16.35) {%
+  A counter divides 50 MHz by 434 (= 50,000,000 / 115,200, rounded): every 434 clocks the register shifts one bit out.};
+\renewcommand{\cw}{1.2}
+\foreach \nm [count=\k from 0] in {idle, start, d0, d1, d2, d3, d4, d5, d6, d7, stop, idle}{\node[lab] at ({23.6+(\k+0.5)*\cw},20.0) {\nm};}
+\wname{23.6}{19.2}{TX}  \wsig{23.6}{19.2}{1,0,0,1,0,0,0,0,1,0,1,1}
+\foreach \b [count=\k from 2] in {0,1,0,0,0,0,1,0}{\node[font=\tiny\bfseries, text=cpud] at ({23.6+(\k+0.5)*\cw},18.85) {\b};}
+\draw[{Stealth[length=1.5mm]}-{Stealth[length=1.5mm]}, bad] ({23.6+1*\cw},18.45) -- ({23.6+2*\cw},18.45);
+\node[font=\tiny, text=bad, anchor=north] at ({23.6+1.5*\cw},18.4) {8.68 $\mu$s};
+\node[note, font=\tiny, anchor=north west, text width=14.0cm] at (23.6,17.85) {%
+  Byte 0x42 = 0100\,0010, sent \textbf{LSB first}: 0,1,0,0,0,0,1,0. A start bit (0) wakes the receiver; a stop bit (1)
+  returns the line to idle. 10 bits $\times$ 8.68 $\mu$s = 86.8 $\mu$s per byte $\Rightarrow$ 11,520 bytes/s at 115,200 baud.\\[3pt]
+  The receiver syncs the pin with 2 flip-flops, waits for the falling edge, moves to the middle of the start bit
+  (217 clocks), then samples every 434 clocks, always in the middle of a bit. This is exactly what your \rn{uart\_rx.sv} does.};
+
+% =====================================================================
+% (D) SPI
+% =====================================================================
+\panel{0}{0.7}{12.6}{14.7}{SPI: 4 wires, two shift registers in a ring}
+\node[anchor=north west, font=\scriptsize\bfseries] at (0.3,13.95) {controller (SoC)};
+\node[anchor=north west, font=\scriptsize\bfseries] at (7.3,13.95) {device (e.g. flash)};
+\ffrow{0.4}{12.75}{8}{0.45}{ff=prd} \ffrow{7.4}{12.75}{8}{0.45}{ff=prd}
+\draw[dat] (4.0,13.0) -- (7.4,13.0); \node[lab, text=ink, anchor=south] at (5.7,13.0) {MOSI};
+\draw[dat] (11.0,12.97) -- (11.3,12.97) -- (11.3,12.25) -- (0.1,12.25) -- (0.1,12.97) -- (0.4,12.97);
+\node[lab, text=ink, anchor=north] at (5.7,12.22) {MISO};
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (0.3,11.75) {%
+  Every SCLK pulse both sides shift by one bit: after 8 pulses they have \textbf{swapped} bytes. CS\_n = 0 selects the device.};
+\renewcommand{\cw}{1.0}
+\wname{1.6}{10.0}{CS\_n}  \wsig{1.6}{10.0}{1,0,0,0,0,0,0,0,0,1}
+\wname{1.6}{9.25}{SCLK}
+\wsig{1.6}{9.25}{0,0,0,0,0,0,0,0,0,0}
+\foreach \k in {1,...,8}{\draw[pcb, thick, fill=white] ({1.6+\k*\cw+0.25},9.25) -- ++(0,0.45) -- ++(0.5,0) -- ++(0,-0.45);}
+\wname{1.6}{8.5}{MOSI}
+\widle{1.6}{8.5}{0}{1}
+\foreach \b [count=\k from 1] in {1,0,1,0,0,1,0,1}{\wbus{1.6}{8.5}{\k}{\k+1}{\b}}
+\widle{1.6}{8.5}{9}{10}
+\wname{1.6}{7.75}{MISO}
+\widle{1.6}{7.75}{0}{1}
+\foreach \b [count=\k from 1] in {0,0,1,1,1,1,0,0}{\wbus{1.6}{7.75}{\k}{\k+1}{\b}}
+\widle{1.6}{7.75}{9}{10}
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (0.3,7.25) {%
+  Mode 0: SCLK idles low, both sides sample on the rising edge, MSB first. MOSI sends 0xA5, MISO returns 0x3C.\\[3pt]
+  Fast (1--50 MHz), full duplex, but one CS\_n wire per device. Used for flash chips, displays, ADCs and sensors.};
+
+% =====================================================================
+% (E) I2C
+% =====================================================================
+\panel{12.9}{0.7}{25.4}{14.7}{I2C: 2 shared wires, addressed devices}
+\draw[pcb, thick] (13.6,13.6) -- (24.8,13.6); \node[lab, text=ink, anchor=south west] at (13.6,13.62) {VDD};
+\foreach \x/\nm in {14.4/SDA, 15.4/SCL}{
+  \draw[pcb, thick] (\x,13.6) -- (\x,13.3);
+  \draw[pcb, thick] ({\x-0.12},13.3) rectangle ({\x+0.12},12.6);
+  \draw[pcb, thick] (\x,12.6) -- (\x,12.2);
+  \node[lab, text=ink, anchor=east] at ({\x-0.15},12.95) {R};}
+\draw[pcb, thick] (14.4,12.2) -- (24.8,12.2); \node[lab, text=ink, anchor=west] at (24.8,12.2) {SDA};
+\draw[pcb, thick] (15.4,11.7) -- (24.8,11.7); \node[lab, text=ink, anchor=west] at (24.8,11.7) {SCL};
+\draw[pcb, thick] (15.4,12.2) -- (15.4,11.7);
+\foreach \x/\nm in {17.0/{SoC}, 19.6/{sensor 0x1D}, 22.2/{EEPROM 0x50}}{
+  \node[per, fill=white, minimum width=2.2cm, minimum height=0.75cm, font=\tiny, anchor=north] at (\x,11.25) {\nm};
+  \draw[pcb] ({\x-0.4},12.2) -- ({\x-0.4},11.25); \draw[pcb] ({\x+0.4},11.7) -- ({\x+0.4},11.25);}
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (13.2,10.25) {%
+  \textbf{Open drain}: a device can only pull a wire to 0; the resistor pulls it back to 1. So the wire is the AND of all
+  devices and nobody can short it.};
+\renewcommand{\cw}{0.82}
+\foreach \nm [count=\k from 0] in {S, A6, A5, A4, A3, A2, A1, A0, R/W, ACK, P}{\node[lab] at ({14.6+(\k+0.5)*\cw},8.75) {\nm};}
+\renewcommand{\cw}{0.41}
+\wname{14.6}{8.0}{SCL} \wsig{14.6}{8.0}{1,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,1,1}
+\wname{14.6}{7.2}{SDA} \wsig{14.6}{7.2}{1,0,0,0,0,0,1,1,1,1,1,1,0,0,1,1,0,0,0,0,0,1}
+\renewcommand{\cw}{0.82}
+\foreach \b [count=\k from 1] in {0,0,1,1,1,0,1,0,0}{\node[font=\tiny\bfseries, text=cpud] at ({14.6+(\k+0.5)*\cw},6.9) {\b};}
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (13.2,6.5) {%
+  \textbf{S} START: SDA falls while SCL is high. Then the 7-bit address (0x1D = 0011101), R/W = 0 (write).
+  \textbf{ACK}: the addressed device pulls SDA low. Data bytes follow, each with an ACK. \textbf{P} STOP: SDA rises while SCL is high.\\[3pt]
+  Slow (100 kHz, 400 kHz, 1 MHz) but only 2 wires for many devices. Used for sensors, power chips (PMIC), cameras' control.
+  The DE10-Lite's accelerometer can be read over I2C or SPI.};
+
+% =====================================================================
+% (F) GPIO, timer, watchdog
+% =====================================================================
+\panel{25.7}{0.7}{38.3}{14.7}{GPIO, timer and watchdog}
+\node[anchor=north west, font=\scriptsize\bfseries] at (26.0,13.95) {GPIO: one bit per pin in each register};
+\foreach \nm/\tx [count=\k from 0] in {DIR/{1 = output}, OUT/{value to drive}, IN/{after a 2-FF synchronizer}, IRQ\_EN/{interrupt on edge?}, IRQ\_ST/{edge seen (sticky)}}{
+  \node[font=\tiny\ttfamily, anchor=west] at (26.0,{13.25-\k*0.5}) {\nm};
+  \ffrow{27.4}{13.13-\k*0.5}{8}{0.24}{ff=prd}
+  \node[lab, anchor=west] at (29.4,{13.25-\k*0.5}) {\tx};}
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (26.0,10.7) {%
+  Edge detect = IN AND NOT IN\_previous: one flip-flop + one gate per pin. Your KEY buttons go through \rn{sync\_2ff} the same way.};
+\node[anchor=north west, font=\scriptsize\bfseries] at (26.0,9.75) {timer / PWM};
+\node[comb, minimum width=2.0cm, minimum height=0.7cm, font=\tiny] (pre) at (27.2,8.75) {prescaler $\div$k};
+\node[draw=prd, fill=prf, thick, minimum width=2.4cm, minimum height=0.7cm, font=\tiny] (cnt) at (30.0,8.75) {32-bit counter (FF)};
+\node[comb, minimum width=2.6cm, minimum height=0.7cm, font=\tiny] (cmp) at (33.1,8.75) {counter $<$ compare?};
+\draw[dat] (pre) -- (cnt); \draw[dat] (cnt) -- (cmp);
+\draw[dat] (cmp.east) -- (35.6,8.75); \node[lab, text=ink, anchor=west] at (35.6,8.75) {PWM pin / IRQ};
+\renewcommand{\cw}{0.4}
+\wname{27.4}{7.25}{PWM}  \wsig{27.4}{7.25}{1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0}
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (26.0,6.7) {%
+  compare = 25\,\% of the period $\Rightarrow$ 25\,\% duty cycle (LED brightness, motor speed). A match can also raise an IRQ:
+  that is how the OS gets its regular ``tick''. Your \rn{tick\_gen.sv} (2 Hz heartbeat LED) is a timer like this.};
+\node[anchor=north west, font=\scriptsize\bfseries] at (26.0,5.1) {watchdog};
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (26.0,4.6) {%
+  A counter that counts down all the time. Healthy software writes a ``kick'' register now and then, which reloads it.
+  If the software hangs, the counter reaches 0 and the watchdog \textbf{resets the whole chip}. Cheap insurance:
+  one counter, one comparator, one reset wire. Required in cars and industrial products.};
+
+\figfoot{Addresses, register layouts and the I2C device addresses are examples. UART numbers match your design: 50 MHz, 115,200 baud, 434 clocks per bit.}
+\end{tikzpicture}
+\end{document}

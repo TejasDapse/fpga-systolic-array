@@ -1,0 +1,79 @@
+% 00_contents.tex -- cover and contents page for the SoC figure set.
+% Build: tectonic 00_contents.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\tikzset{ffn/.style={ff=npud}}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\node[anchor=west, font=\fontsize{30}{36}\selectfont\bfseries, text=pcb] at (0,29.3) {SoC Architecture, Block by Block};
+\node[anchor=west, font=\Large, text=ink] at (0,28.15)
+  {From your 4$\times$4 systolic array (\rn{mm\_core} on the DE10-Lite) to a complete system-on-chip, in 13 figures};
+
+% =====================================================================
+% contents
+% =====================================================================
+\panel{0}{0.7}{23.2}{27.3}{Contents}
+\foreach \t/\d [count=\k from 1] in {
+    {The whole SoC}/{every block on one chip, how they connect, where your project fits},
+    {CPU core}/{a 5-stage RISC-V pipeline drawn register by register; hazards; what big cores add},
+    {Caches and MMU}/{tag / index / offset, a 4-way cache hit, MESI coherence, TLB and page walk},
+    {GPU}/{shader cores, warps, SIMT, divergence, hiding memory latency},
+    {NPU}/{a full accelerator around a systolic array like yours; DMA, SRAM, requantization},
+    {Interconnect}/{AXI channels and the VALID / READY rule, APB, crossbar, network-on-chip},
+    {Memory system}/{DRAM controller, PHY, inside a DRAM bank, timing, bandwidth math},
+    {One AI job end to end}/{16 steps from the app to the NPU and back; interrupts; DMA; cache trap},
+    {Clocks, resets, power}/{PLL, clock gating, DVFS, power domains, reset and clock-domain crossing},
+    {Boot, security, debug}/{chain of trust, TrustZone, crypto, JTAG; how your FPGA ``boots''},
+    {Peripherals}/{APB bridge, UART (your 434 clocks per bit), SPI, I2C, GPIO, timers, watchdog},
+    {Your mini SoC}/{RISC-V + \rn{mm\_core} on one Avalon bus in the MAX 10: the next build},
+    {Floorplan + cheat sheet}/{where blocks sit on a die; every block in one line; practice questions}}{
+  \pgfmathsetmacro{\yy}{25.75-(\k-1)*1.88}
+  \node[num, minimum size=0.95cm, font=\large\bfseries] at (0.95,\yy) {\k};
+  \node[anchor=west, font=\Large\bfseries, text=pcb] at (1.75,{\yy+0.3}) {\t};
+  \node[anchor=west, font=\normalsize, text=ink] at (1.75,{\yy-0.38}) {\d};}
+
+% =====================================================================
+% how to read
+% =====================================================================
+\panel{23.5}{14.6}{38.3}{27.3}{How to read every figure}
+\foreach \st/\txt [count=\k from 0] in {
+    {ffn}/{one small square = one D flip-flop},
+    {comb}/{peach = combinational logic (0 flip-flops)},
+    {sram}/{purple = SRAM array (memory, not flip-flops)},
+    {hard}/{dashed blue = analog, hard macro or off-chip},
+    {ours}/{red dashed = parts your \rn{mm\_core} already has}}{
+  \pgfmathsetmacro{\yy}{25.9-\k*0.82}
+  \draw[\st] (23.9,{\yy-0.25}) rectangle ++(0.7,0.5);
+  \node[anchor=west, font=\small] at (24.85,\yy) {\txt};}
+\foreach \st/\txt [count=\k from 0] in {
+    {axi1}/{thick copper = AXI data bus (bursts)},
+    {apb1}/{thin copper = AXI-Lite / APB register bus},
+    {irq}/{red dotted = interrupt wire},
+    {dat}/{teal = a signal inside one block},
+    {ctl}/{grey dashed = control signal}}{
+  \pgfmathsetmacro{\yy}{21.75-\k*0.82}
+  \draw[\st] (23.9,\yy) -- ++(0.9,0);
+  \node[anchor=west, font=\small] at (24.95,\yy) {\txt};}
+\node[note, font=\small, anchor=north west, text width=14.2cm] at (23.8,17.4) {%
+  Block colours: \textcolor{cpud}{\textbf{CPU}}, \textcolor{gpud}{\textbf{GPU}}, \textcolor{npud}{\textbf{NPU}},
+  \textcolor{memd}{\textbf{memory}}, \textcolor{busd}{\textbf{interconnect}}, \textcolor{prd}{\textbf{peripherals}},
+  \textcolor{secd}{\textbf{security}}, \textcolor{pwrd}{\textbf{clocks / power}}, \textcolor{medd}{\textbf{media}}.\\[3pt]
+  The orange circle on a block in Figure 1 is the number of the figure that zooms into it.};
+
+% =====================================================================
+% reading order + about the numbers
+% =====================================================================
+\panel{23.5}{7.6}{38.3}{14.3}{Suggested reading order}
+\node[note, font=\small, anchor=north west, text width=14.2cm] at (23.8,13.35) {%
+  \textbf{First} (they connect straight to your project): \textbf{1 $\rightarrow$ 5 $\rightarrow$ 8 $\rightarrow$ 12}.\\[4pt]
+  \textbf{Then} the plumbing every block uses: \textbf{6 $\rightarrow$ 7 $\rightarrow$ 9}.\\[4pt]
+  \textbf{Then} the other engines and the system services: \textbf{2, 3, 4, 10, 11}.\\[4pt]
+  \textbf{Last}: \textbf{13}, and answer its five questions out loud without looking.};
+\panel{23.5}{0.7}{38.3}{7.3}{About the numbers}
+\node[note, font=\small, anchor=north west, text width=14.2cm] at (23.8,6.35) {%
+  Numbers about \textbf{your design} come from \rn{rtl/core/*.sv} and \rn{docs/results} (e.g. 1,084 flip-flops, 434 clocks per bit, 240 ns compute).\\[4pt]
+  Numbers about real SoCs are marked \textbf{example} or \textbf{typical}: they show the right size, not one specific product.\\[4pt]
+  Anything not yet built or measured is marked \textbf{estimate} or \textbf{plan}.};
+\end{tikzpicture}
+\end{document}

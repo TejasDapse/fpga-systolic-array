@@ -1,0 +1,200 @@
+% 09_clock_power.tex -- PLL, clock tree + gating, DVFS, power domains, reset synchronizer, CDC.
+% Build: tectonic 09_clock_power.tex
+\documentclass[tikz,border=10pt,12pt]{standalone}
+\input{soc_style}
+\newcommand{\dff}[3]{% name x y : a D flip-flop box with a clock triangle
+  \node[draw=pcb, fill=white, thick, minimum width=1.1cm, minimum height=1.2cm, font=\tiny, align=center] (#1) at (#2,#3) {D\hspace{0.35cm}Q\\[6pt]\ };
+  \draw[pcb, thick] ($(#1.south)+(-0.15,0)$) -- ($(#1.south)+(0,0.2)$) -- ($(#1.south)+(0.15,0)$);}
+\begin{document}
+\begin{tikzpicture}[line join=round]
+\canvas
+\figtitle{9}{Clocks, resets and power: keeping every flip-flop ticking safely}
+  {One crystal feeds PLLs that make every clock. Idle blocks get their clock stopped or their power cut.
+   Signals that cross from one clock to another need synchronizers.}
+
+% =====================================================================
+% (A) PLL
+% =====================================================================
+\panel{0}{19.8}{19.0}{28.1}{PLL: from a 24 MHz crystal to a 3 GHz clock}
+\node[hard, minimum width=2.0cm, minimum height=1.3cm, font=\tiny, text width=1.8cm] (xt) at (1.5,25.3) {\textbf{crystal}\\24 MHz};
+\node[comb, minimum width=2.0cm, minimum height=1.3cm, font=\tiny, text width=1.8cm] (pfd) at (4.3,25.3) {\textbf{phase detector}\\who is early?};
+\node[hard, minimum width=2.2cm, minimum height=1.3cm, font=\tiny, text width=2.0cm] (lf) at (7.2,25.3) {\textbf{charge pump + loop filter}\\$\rightarrow$ voltage};
+\node[hard, minimum width=2.0cm, minimum height=1.3cm, font=\tiny, text width=1.8cm] (vco) at (10.1,25.3) {\textbf{VCO}\\voltage $\rightarrow$ frequency};
+\node[comb, minimum width=2.0cm, minimum height=1.3cm, font=\tiny, text width=1.8cm] (od) at (12.9,25.3) {\textbf{output divider}\\$\div$P};
+\draw[dat] (xt) -- (pfd); \draw[dat] (pfd) -- (lf); \draw[dat] (lf) -- (vco); \draw[dat] (vco) -- (od);
+\node[comb, minimum width=1.6cm, minimum height=0.7cm, font=\tiny] (fb) at (7.2,23.4) {$\div$N = 125};
+\draw[dat] (11.35,25.3) |- (fb.east); \draw[dat] (fb.west) -| (pfd.south);
+\node[lab, text=ink, anchor=north] at (7.2,22.95) {feedback: the loop adjusts until 24 MHz $\times$ 125 = 3.0 GHz};
+\node[anchor=north west, font=\scriptsize\bfseries] at (14.3,27.3) {example clocks (several PLLs):};
+\node[note, font=\tiny, anchor=north west, text width=4.5cm] at (14.3,26.8) {%
+  big CPU cores\quad 0.6--3.0 GHz (DVFS)\\little CPU cores\quad 0.3--2.0 GHz\\GPU\quad 0.3--1.0 GHz\\NPU\quad $\approx$1 GHz\\
+  NoC\quad $\approx$1 GHz\\DRAM controller\quad 800 MHz\\peripherals\quad 24--100 MHz};
+\draw[dat] (od.east) -- (14.2,25.3);
+\node[note, anchor=north west, text width=18.2cm] at (0.3,22.4) {%
+  $f_{out} = f_{ref} \times N / P$. The PLL also outputs \textbf{locked}: resets are released only after it is 1.
+  The MAX 10 has PLLs too; your design uses the board's 50 MHz oscillator directly, with no PLL.};
+
+% =====================================================================
+% (B) clock tree + clock gating
+% =====================================================================
+\panel{19.3}{19.8}{38.3}{28.1}{Clock tree and clock gating}
+% H-tree
+\coordinate (rt) at (22.6,23.6);
+\draw[pcb, very thick] (21.1,23.6) -- (24.1,23.6);
+\foreach \x in {21.1,24.1}{
+  \draw[pcb, thick] (\x,22.1) -- (\x,25.1);
+  \foreach \y in {22.1,25.1}{
+    \draw[pcb] ({\x-0.75},\y) -- ({\x+0.75},\y);
+    \foreach \xx in {-0.75,0.75}{
+      \draw[pcb] ({\x+\xx},{\y-0.6}) -- ({\x+\xx},{\y+0.6});
+      \foreach \yy in {-0.6,0.6}{\draw[ff=cpud] ({\x+\xx-0.12},{\y+\yy-0.12}) rectangle ++(0.24,0.24);}}}}
+\node[circle, fill=pcb, inner sep=1.5pt] at (rt) {};
+\draw[dat] (22.6,27.0) -- (rt);
+\node[lab, text=ink, anchor=south] at (22.6,27.0) {clock from PLL};
+\node[lab, text=ink, anchor=north, text width=5.5cm, align=center] at (22.6,21.2) {H-tree: the same wire length to every flip-flop group $\Rightarrow$ small skew};
+% ICG cell
+\node[draw=pcb, fill=white, thick, minimum width=1.4cm, minimum height=1.0cm, font=\tiny, align=center] (lat) at (26.9,21.5) {latch\\open when\\CLK = 0};
+\node[comb, minimum width=1.0cm, minimum height=1.0cm, font=\tiny\bfseries] (gand) at (28.9,21.5) {AND};
+\draw[dat] (25.9,21.7) -- ($(lat.west)+(0,0.2)$); \node[lab, anchor=east] at (25.9,21.7) {EN};
+\draw[dat] (lat) -- (gand);
+\draw[dat] (25.9,20.5) -- (28.6,20.5) -- (28.6,21.0); \node[lab, anchor=east] at (25.9,20.5) {CLK};
+\draw[dat] (gand.east) -- (30.0,21.5); \node[lab, anchor=west] at (30.0,21.5) {GCLK};
+\node[lab, text=ink, anchor=south] at (27.9,22.05) {\textbf{ICG}: integrated clock-gating cell};
+% waveform in half-cycles
+\renewcommand{\cw}{0.45}
+\wname{30.8}{26.4}{CLK}     \wsig{30.8}{26.4}{1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0}
+\wname{30.8}{25.55}{EN}     \wsig{30.8}{25.55}{0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0}
+\wname{30.8}{24.7}{latched} \wsig{30.8}{24.7}{0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0}
+\wname{30.8}{23.85}{GCLK}   \wsig{30.8}{23.85}{0,0,0,0,1,0,1,0,1,0,0,0,0,0,0,0}
+\node[note, font=\tiny, anchor=north west, text width=7.5cm] at (30.4,23.4) {%
+  EN changes while CLK is high, but the latch passes it only while CLK is low, so GCLK gets 3 clean pulses and no glitch.
+  A plain AND gate would cut a pulse short.\\[2pt]
+  Stopped clock = no toggling = no dynamic power. FPGAs use a \textbf{clock enable} instead (your \rn{en} $\rightarrow$ LAB enable).};
+
+% =====================================================================
+% (C) DVFS
+% =====================================================================
+\panel{0}{10.4}{12.6}{19.5}{DVFS: lower voltage, lower frequency}
+\node[note, anchor=north west, text width=12.0cm] at (0.3,18.75) {%
+  Dynamic power $P = \alpha \cdot C \cdot V^2 \cdot f$ \quad ($\alpha$ = how often bits toggle, $C$ = wire + gate capacitance).
+  Lower $f$ allows lower $V$, and $V$ counts twice.};
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (0.3,17.55) {%
+  \renewcommand{\arraystretch}{1.1}%
+  \begin{tabular}{@{}r r r r r@{}}
+    \toprule
+    \textbf{V} & \textbf{f (GHz)} & $\mathbf{V^2 f}$ & \textbf{power} & \textbf{speed}\\
+    \midrule
+    0.60 & 0.8 & 0.29 & 10\,\% & 27\,\%\\
+    0.75 & 1.8 & 1.01 & 34\,\% & 60\,\%\\
+    0.90 & 2.6 & 2.11 & 70\,\% & 87\,\%\\
+    1.00 & 3.0 & 3.00 & 100\,\% & 100\,\%\\
+    \bottomrule
+  \end{tabular}};
+\foreach \p/\s [count=\k from 0] in {10/27, 34/60, 70/87, 100/100}{
+  \pgfmathsetmacro{\yy}{17.0-\k*0.75}
+  \fill[pwrd!70] (7.6,\yy) rectangle ++({\p*0.045},0.28);
+  \fill[cpud!60] (7.6,{\yy-0.3}) rectangle ++({\s*0.045},0.28);}
+\node[lab, text=pwrd, font=\tiny\bfseries, anchor=west] at (7.6,17.55) {power};
+\node[lab, text=cpud, font=\tiny\bfseries, anchor=west] at (9.0,17.55) {speed};
+\node[note, anchor=north west, text width=12.0cm] at (0.3,13.85) {%
+  From 3.0 to 1.8 GHz: 40\,\% slower, but 66\,\% less power, and energy per operation ($\propto V^2$) drops by 44\,\%.
+  The PMU moves between these \textbf{operating points} many times a second. Example values; leakage power is ignored here.};
+
+% =====================================================================
+% (D) power domains
+% =====================================================================
+\panel{12.9}{10.4}{25.4}{19.5}{Power domains: switching a block off}
+\draw[pwr] (13.2,15.2) rectangle (17.4,18.75);
+\node[anchor=north west, font=\tiny\bfseries, text=pwrd] at (13.3,18.65) {always-on domain};
+\node[note, font=\tiny, anchor=north west, text width=3.9cm] at (13.3,18.25) {PMU, RTC, wake-up logic. Never powered off.};
+\node[pwr, fill=white, minimum width=3.8cm, minimum height=0.7cm, font=\tiny, anchor=north west] at (13.4,17.2) {PMU sequencer FSM};
+\draw[npu] (19.6,15.2) rectangle (25.0,18.75);
+\node[anchor=north west, font=\tiny\bfseries, text=npud] at (19.7,18.65) {NPU domain (switchable)};
+\node[draw=pcb, fill=white, minimum width=1.6cm, minimum height=0.55cm, font=\tiny, anchor=north west] at (19.8,18.15) {power switch};
+\node[lab, text=ink, anchor=west] at (21.5,17.88) {PMOS: VDD $\rightarrow$ VDD\_NPU};
+\foreach \k in {0,1,2,3}{\draw[ff=npud] ({19.85+\k*0.4},16.75) rectangle ++(0.3,0.3);}
+\node[lab, text=ink, anchor=west] at (21.5,16.9) {retention FFs keep state};
+\node[comb, minimum width=1.5cm, minimum height=0.6cm, font=\tiny, anchor=north west] at (17.8,16.6) {isolation};
+\draw[dat] (19.6,16.3) -- (19.3,16.3);
+\draw[dat] (17.8,16.3) -- (17.4,16.3);
+\node[lab, text=ink, anchor=north west, text width=2.0cm] at (17.75,15.9) {clamps outputs to 0 while off};
+\node[comb, minimum width=1.5cm, minimum height=0.6cm, font=\tiny, anchor=north west] at (17.8,18.4) {level shift};
+\node[note, font=\scriptsize, anchor=north west, text width=11.9cm] at (13.2,14.85) {%
+  \textbf{Off}: 1 stop the clock, 2 save state into retention FFs, 3 isolation on, 4 power switch off.
+  \textbf{On}: power on, wait until stable, restore, isolation off, release reset, start the clock.\\[3pt]
+  Clock gating saves dynamic power; power gating also removes \textbf{leakage}, which grows as transistors shrink.
+  Level shifters connect domains that run at different voltages.};
+
+% =====================================================================
+% (E) reset
+% =====================================================================
+\panel{25.7}{10.4}{38.3}{19.5}{Reset: assert at once, release on a clock edge}
+\dff{r1}{28.2}{17.0} \dff{r2}{30.6}{17.0}
+\draw[dat] (26.6,17.2) -- ($(r1.west)+(0,0.2)$); \node[lab, anchor=east] at (26.6,17.2) {1};
+\draw[dat] ($(r1.east)+(0,0.2)$) -- ($(r2.west)+(0,0.2)$);
+\draw[dat] ($(r2.east)+(0,0.2)$) -- (32.3,17.2); \node[lab, text=ink, anchor=west] at (32.3,17.2) {rst\_sync\_n $\rightarrow$ block};
+\draw[ctl] (27.0,18.05) -- (30.6,18.05); \draw[ctl] (28.2,18.05) -- (r1.north); \draw[ctl] (30.6,18.05) -- (r2.north);
+\node[lab, anchor=south west] at (26.0,18.1) {rst\_n (async clear)};
+\node[note, font=\scriptsize, anchor=north west, text width=12.0cm] at (26.0,15.9) {%
+  rst\_n = 0 clears both flip-flops at once (asynchronous). When rst\_n returns to 1, the 1 walks through the two
+  flip-flops, so the block leaves reset exactly on a clock edge (synchronous release), even if rst\_n changed at a bad moment.\\[3pt]
+  Your \rn{pe.sv} uses a fully synchronous reset (checked at the clock edge). Both work on FPGAs; ASIC teams usually
+  pick asynchronous assert + synchronous release.\\[3pt]
+  Order at power-on: supplies stable $\rightarrow$ PLL locked $\rightarrow$ release resets, block by block.};
+
+% =====================================================================
+% (F) CDC
+% =====================================================================
+\panel{0}{0.7}{38.3}{10.1}{Clock-domain crossing: 2-flip-flop synchronizer and async FIFO}
+\node[anchor=north west, font=\scriptsize\bfseries] at (0.3,9.35) {1 bit: two flip-flops in a row (your \rn{sync\_2ff.sv})};
+\dff{s1}{3.6}{7.6} \dff{s2}{6.0}{7.6}
+\draw[dat] (1.2,7.8) -- ($(s1.west)+(0,0.2)$); \node[lab, anchor=south] at (1.6,7.8) {async in};
+\draw[dat] ($(s1.east)+(0,0.2)$) -- ($(s2.west)+(0,0.2)$); \node[lab, anchor=south, text width=1.2cm, align=center] at (4.8,7.85) {may be metastable};
+\draw[dat] ($(s2.east)+(0,0.2)$) -- (7.6,7.8); \node[lab, text=ink, anchor=west] at (7.6,7.8) {safe};
+\draw[dat] (1.2,6.6) -- (6.0,6.6); \draw[dat] (3.6,6.6) -- (s1.south); \draw[dat] (6.0,6.6) -- (s2.south);
+\node[lab, anchor=east] at (1.2,6.6) {clk};
+\node[note, font=\scriptsize, anchor=north west, text width=9.4cm] at (0.3,6.2) {%
+  If the input changes just at the clock edge, FF1 can hang between 0 and 1 for a short time (\textbf{metastability}).
+  FF2 gives it a whole clock period to settle. The chance of a failure becomes tiny (MTBF of years).
+  In your design the UART RX pin and the KEY buttons go through \rn{sync\_2ff}.};
+\node[note, font=\scriptsize, anchor=north west, text width=9.4cm] at (0.3,3.3) {%
+  \textbf{Never} send a multi-bit binary count through 2-FF synchronizers: the bits can arrive in different cycles
+  (3 $\rightarrow$ 4 is 011 $\rightarrow$ 100: three bits change at once). Use Gray code, a handshake or an async FIFO.};
+% async FIFO
+\node[anchor=north west, font=\scriptsize\bfseries] at (10.2,9.35) {many bits: async FIFO};
+\draw[cpu] (10.3,2.2) rectangle (15.6,8.8);
+\node[anchor=north west, font=\tiny\bfseries, text=cpud] at (10.4,8.7) {write clock domain};
+\node[cpu, fill=white, minimum width=4.9cm, minimum height=0.7cm, font=\tiny, anchor=north west] at (10.5,8.2) {write pointer (binary) $\rightarrow$ Gray};
+\node[comb, minimum width=4.9cm, minimum height=0.7cm, font=\tiny, anchor=north west] at (10.5,7.2) {full? compare with synced read ptr};
+\node[sram, minimum width=4.1cm, minimum height=2.6cm, font=\tiny, anchor=north west, text width=3.9cm] at (16.0,8.2)
+  {\textbf{dual-port RAM}\\write port on wclk\\read port on rclk\\(an M9K can do this)};
+\draw[gpu] (20.5,2.2) rectangle (25.8,8.8);
+\node[anchor=north west, font=\tiny\bfseries, text=gpud] at (20.6,8.7) {read clock domain};
+\node[gpu, fill=white, minimum width=4.9cm, minimum height=0.7cm, font=\tiny, anchor=north west] at (20.7,8.2) {read pointer (binary) $\rightarrow$ Gray};
+\node[comb, minimum width=4.9cm, minimum height=0.7cm, font=\tiny, anchor=north west] at (20.7,7.2) {empty? compare with synced write ptr};
+\foreach \k in {0,1}{\draw[ff=cpud] ({17.2+\k*0.45},4.6) rectangle ++(0.35,0.35);}
+\foreach \k in {0,1}{\draw[ff=gpud] ({18.6+\k*0.45},4.0) rectangle ++(0.35,0.35);}
+\draw[dat] (15.6,4.25) -- (18.6,4.25); \draw[dat] (19.45,4.17) -- (20.5,4.17);
+\draw[dat] (20.5,4.77) -- (18.1,4.77); \draw[dat] (17.2,4.77) -- (15.6,4.77);
+\node[lab, text=ink, anchor=north, text width=4.0cm, align=center] at (18.05,3.9) {Gray pointers cross through 2-FF synchronizers};
+\node[note, font=\scriptsize, anchor=north west, text width=5.0cm] at (10.4,6.2) {Only 1 bit of a Gray pointer changes per step, so a half-updated value is still either the old or the new pointer.};
+% gray table
+\node[anchor=north west, font=\scriptsize, inner sep=0pt] at (26.4,9.3) {%
+  \renewcommand{\arraystretch}{1.0}%
+  \begin{tabular}{@{}c c c@{}}
+    \toprule
+    \textbf{n} & \textbf{binary} & \textbf{Gray}\\
+    \midrule
+    0 & 000 & 000\\ 1 & 001 & 001\\ 2 & 010 & 011\\ 3 & 011 & 010\\
+    4 & 100 & 110\\ 5 & 101 & 111\\ 6 & 110 & 101\\ 7 & 111 & 100\\
+    \bottomrule
+  \end{tabular}};
+\node[note, font=\scriptsize, anchor=north west, text width=7.6cm] at (30.4,9.25) {%
+  \textbf{Gray = binary XOR (binary $\gg$ 1)}: one XOR gate per bit.\\[3pt]
+  Each step changes exactly one bit (look down the right column), also from 7 back to 0.\\[4pt]
+  \textbf{Your design} has one clock (50 MHz) for everything, so the only crossings are the asynchronous input pins.
+  A real SoC has dozens of clock domains and hundreds of crossings; CDC checking tools verify every one.};
+
+\figfoot{PLL settings, operating points and clock rates are example values. Power-domain cell names follow common low-power design practice.}
+\end{tikzpicture}
+\end{document}
